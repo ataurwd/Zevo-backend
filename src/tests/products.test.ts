@@ -5,6 +5,7 @@ import { app } from "../app";
 import { ProductsRepository } from "../modules/products/products.repository";
 import { SellersRepository } from "../modules/sellers/sellers.repository";
 import { StoresRepository } from "../modules/stores/stores.repository";
+import { InventoryService } from "../modules/inventory/inventory.service";
 import { generateAccessToken } from "../shared/utils/jwt";
 
 describe("Products API Endpoints", () => {
@@ -59,6 +60,7 @@ describe("Products API Endpoints", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(InventoryService, "provisionInventoryForVariant").mockResolvedValue({} as any);
 
     sellerToken = generateAccessToken({
       id: sellerUserId,

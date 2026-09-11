@@ -1,8 +1,9 @@
-﻿import crypto from "crypto";
+import crypto from "crypto";
 import { ObjectId } from "mongodb";
 import { ProductsRepository } from "./products.repository";
 import { StoresRepository } from "../stores/stores.repository";
 import { SellersRepository } from "../sellers/sellers.repository";
+import { InventoryService } from "../inventory/inventory.service";
 import {
   CreateProductDTO,
   UpdateProductDTO,
@@ -92,6 +93,17 @@ export class ProductsService {
     };
 
     const created = await ProductsRepository.create(doc);
+
+    // Auto-provision inventory records for all variants
+    for (const variant of created.variants) {
+      await InventoryService.provisionInventoryForVariant(
+        created._id,
+        variant._id,
+        variant.sku,
+        created.store_id,
+        created.seller_id
+      );
+    }
 
     await AuditService.log({
       userId: sellerUserId,
@@ -212,6 +224,15 @@ export class ProductsService {
       variants: updatedVariants,
       base_price,
     });
+
+    // Auto-provision inventory for newly added variant
+    await InventoryService.provisionInventoryForVariant(
+      product._id,
+      newVariant._id,
+      newVariant.sku,
+      product.store_id,
+      product.seller_id
+    );
 
     await this.invalidateCache(productId);
     return ProductsRepository.toResponse(updated!);

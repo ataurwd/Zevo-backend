@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import { verifyAccessToken } from "../utils/jwt";
 import { UnauthorizedError } from "../errors/errors";
 import { getRedisClient } from "../../infrastructure/redis/client";
@@ -41,4 +41,33 @@ export const authenticate = async (req: Request, _res: Response, next: NextFunct
   } catch (error) {
     next(new UnauthorizedError("Invalid or expired access token", error));
   }
+};
+
+export const optionalAuthenticate = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return next();
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const payload = verifyAccessToken(token);
+    req.user = {
+      id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      storeId: payload.storeId,
+      deliveryAgentId: payload.deliveryAgentId,
+    };
+  } catch {
+    // Treat invalid or expired token as unauthenticated (guest)
+  }
+
+  next();
 };
