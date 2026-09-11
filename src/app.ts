@@ -1,4 +1,4 @@
-﻿import express, { Express, Request, Response, NextFunction } from "express";
+import express, { Express, Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -44,6 +44,9 @@ export function createApp(): Express {
 
   // Request Tracking & Logging
   app.use(requestLogger);
+
+  // Static uploads directory
+  app.use("/uploads", express.static("uploads"));
 
   // Master API Router
   app.use("/api/v1", apiRouter);

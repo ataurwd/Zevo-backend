@@ -1,4 +1,4 @@
-﻿import Redis, { RedisOptions } from "ioredis";
+import Redis, { RedisOptions } from "ioredis";
 import { logger } from "../logger";
 
 let redisClient: Redis | null = null;
@@ -16,6 +16,9 @@ export function getRedisClient(): Redis {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
     retryStrategy(times) {
+      if (process.env.NODE_ENV === "test") {
+        return null; // do not retry in unit test mode
+      }
       const delay = Math.min(times * 100, 3000);
       logger.warn(`Redis connection retry attempt ${times}, delaying ${delay}ms`);
       return delay;
