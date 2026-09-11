@@ -1,4 +1,4 @@
-﻿import { Collection, ObjectId } from "mongodb";
+import { Collection, ObjectId } from "mongodb";
 import { getDb } from "../../infrastructure/db/client";
 import { SellerDocument, SellerResponse, SellerStatus } from "./sellers.types";
 
@@ -45,6 +45,25 @@ export class SellersRepository {
       { returnDocument: "after" }
     );
     return res;
+  }
+
+  public static async creditSellerBalance(
+    sellerId: string | ObjectId,
+    earnings: number,
+    commission: number
+  ): Promise<void> {
+    const objectId = typeof sellerId === "string" ? new ObjectId(sellerId) : sellerId;
+    await this.getCollection().updateOne(
+      { _id: objectId },
+      {
+        $inc: {
+          total_earnings: earnings,
+          total_commission_paid: commission,
+          pending_balance: earnings,
+        },
+        $set: { updated_at: new Date() },
+      }
+    );
   }
 
   public static async listByStatus(status?: SellerStatus): Promise<SellerDocument[]> {

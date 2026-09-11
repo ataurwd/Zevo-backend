@@ -9,6 +9,8 @@ import { categoriesRouter } from "../modules/categories/categories.router";
 import { productsRouter } from "../modules/products/products.router";
 import { inventoryRouter } from "../modules/inventory/inventory.router";
 import { cartRouter } from "../modules/cart/cart.router";
+import { ordersRouter } from "../modules/orders/order.router";
+import { paymentRouter } from "../modules/payments/payment.router";
 
 const router = Router();
 
@@ -34,5 +36,11 @@ router.use("/inventory", inventoryRouter);
 
 // Phase 7: Redis-Primary Cart
 router.use("/cart", cartRouter);
+
+// Phase 8: Orders & Sub-Orders
+router.use("/orders", ordersRouter);
+
+// Phase 9: Payments & Webhooks
+router.use("/payments", paymentRouter);
 
 export const apiRouter = router;
