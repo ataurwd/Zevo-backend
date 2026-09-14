@@ -1,3 +1,4 @@
+import https from "https";
 import dns from "node:dns";
 try {
   dns.setServers(["8.8.8.8", "1.1.1.1"]);
@@ -26,6 +27,22 @@ async function bootstrap(): Promise<void> {
 
     const server = http.createServer(app);
     initSocketServer(server);
+
+    // Render Keep-Alive Auto-Ping (Prevents free-tier inactivity sleep)
+    const externalUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL;
+    if (externalUrl) {
+      const PING_INTERVAL = 14 * 60 * 1000; // 14 minutes (Render sleeps after 15 min)
+      const pingUrl = externalUrl.startsWith("http") ? `${externalUrl}/health` : `https://${externalUrl}/health`;
+      setInterval(() => {
+        const client = pingUrl.startsWith("https") ? https : http;
+        client.get(pingUrl, (res) => {
+          logger.info(`Keep-alive ping sent to ${pingUrl} - Status: ${res.statusCode}`);
+        }).on("error", (err) => {
+          logger.warn(`Keep-alive ping failed: ${err.message}`);
+        });
+      }, PING_INTERVAL);
+      logger.info(`Keep-alive auto-ping enabled for ${pingUrl} every 14 minutes`);
+    }
 
     server.listen(PORT, () => {
       logger.info(`🚀 NEXORA API server running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);

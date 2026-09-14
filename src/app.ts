@@ -68,6 +68,16 @@ export function createApp(): Express {
   );
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+  // Root & Direct Health ping for Uptime monitors & Render keep-alive
+  app.get(["/", "/health"], (_req, res) => {
+    res.status(200).json({
+      status: "alive",
+      service: "zevo-backend",
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // Request Tracking & Logging
   app.use(requestLogger);
 
