@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { app } from "../app";
 import { ProductsRepository } from "../modules/products/products.repository";
 import { InventoryRepository } from "../modules/inventory/inventory.repository";
+import { CartService } from "../modules/cart/cart.service";
 import { generateAccessToken } from "../shared/utils/jwt";
 
 // In-memory Redis simulation for tests
@@ -11,6 +12,7 @@ const redisMap = new Map<string, string>();
 
 vi.mock("../infrastructure/redis/client", () => ({
   getRedisClient: () => ({
+    status: "ready",
     get: vi.fn(async (key: string) => redisMap.get(key) || null),
     set: vi.fn(async (key: string, val: string) => {
       redisMap.set(key, val);
@@ -66,6 +68,7 @@ describe("Cart API Endpoints", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     redisMap.clear();
+    CartService.clearInMemoryStore();
 
     customerToken = generateAccessToken({
       id: customerUserId,

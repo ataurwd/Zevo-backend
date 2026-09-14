@@ -8,6 +8,7 @@ import { CartService } from "../modules/cart/cart.service";
 import { InventoryService } from "../modules/inventory/inventory.service";
 import { AddressesRepository } from "../modules/users/addresses.repository";
 import { SellersRepository } from "../modules/sellers/sellers.repository";
+import { StripeService } from "../infrastructure/services/stripe.service";
 import { generateAccessToken } from "../shared/utils/jwt";
 
 describe("Order API Endpoints", () => {
@@ -114,6 +115,15 @@ describe("Order API Endpoints", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(StripeService, "createPaymentIntent").mockResolvedValue({
+      id: "pi_mock_123",
+      client_secret: "pi_mock_123_secret_mock",
+      status: "requires_payment_method",
+    });
+    vi.spyOn(StripeService, "cancelPaymentIntent").mockResolvedValue({
+      id: "pi_mock_123",
+      status: "canceled",
+    });
 
     customerToken = generateAccessToken({
       id: customerUserId,
@@ -185,7 +195,8 @@ describe("Order API Endpoints", () => {
       expect(res.body.data.payment_intent_client_secret).toBeDefined();
       expect(InventoryService.reserveStock).toHaveBeenCalledWith(
         variantId.toString(),
-        1
+        1,
+        expect.anything()
       );
     });
 

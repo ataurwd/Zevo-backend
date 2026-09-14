@@ -26,6 +26,10 @@ const PROMO_CODES: Record<
 
 export class CartService {
   // In-memory fallback map for environments where Redis is not active/available (e.g., local dev)
+  public static clearInMemoryStore(): void {
+    this.inMemoryCartStore.clear();
+  }
+
   private static inMemoryCartStore: Map<
     string,
     { data: string; expiresAt: number }
