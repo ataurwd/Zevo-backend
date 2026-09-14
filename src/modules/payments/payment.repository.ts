@@ -57,6 +57,27 @@ export class PaymentRepository {
     return { payments, total };
   }
 
+  public static async findAll(
+    skip = 0,
+    limit = 50,
+    status?: string
+  ): Promise<{ payments: PaymentDocument[]; total: number }> {
+    const filter: any = {};
+    if (status && status !== "all") {
+      filter.status = status;
+    }
+    const [payments, total] = await Promise.all([
+      this.paymentsCollection
+        .find(filter)
+        .sort({ created_at: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      this.paymentsCollection.countDocuments(filter),
+    ]);
+    return { payments, total };
+  }
+
   public static async updateStatus(
     paymentId: ObjectId,
     status: PaymentStatus,

@@ -43,5 +43,18 @@ export const paymentQueue = new Queue("payment", {
   },
 });
 
-logger.info("BullMQ queues initialized: email, notification, payment");
+export const deliveryQueue = new Queue("delivery", {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 2000,
+    },
+    removeOnComplete: 100,
+    removeOnFail: 500,
+  },
+});
+
+logger.info("BullMQ queues initialized: email, notification, payment, delivery");
 

@@ -1,33 +1,42 @@
-﻿import http from "http";
+import dns from "node:dns";
+try {
+  dns.setServers(["8.8.8.8", "1.1.1.1"]);
+} catch {
+  // Ignore in environments where setting DNS servers is not permitted
+}
+
+import http from "http";
 import { app } from "./app";
 import { logger } from "./infrastructure/logger";
 import { connectDB, closeDB } from "./infrastructure/db/client";
 import { getRedisClient, closeRedis } from "./infrastructure/redis/client";
+import { initSocketServer } from "./infrastructure/socket/io";
 
 const PORT = parseInt(process.env.PORT || "5000", 10);
 
 async function bootstrap(): Promise<void> {
   try {
-    // Attempt connections to infrastructure dependencies
-    // (If running outside Docker for tests or dev, connection failure logs a warning without crashing if desired)
+    // 1. Establish database connection before accepting traffic
     try {
-      await connectDB(3, 1000);
+      await connectDB(5, 1500);
+      logger.info("MongoDB connection successfully established.");
     } catch (err) {
-      logger.warn({ err }, "Initial MongoDB connection failed. Will retry on demand.");
+      logger.error({ err }, "Initial MongoDB connection failed. Will retry on demand.");
     }
+
+    const server = http.createServer(app);
+    initSocketServer(server);
+
+    server.listen(PORT, () => {
+      logger.info(`🚀 NEXORA API server running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
+      logger.info(`Health check available at http://localhost:${PORT}/api/v1/health/live`);
+    });
 
     try {
       getRedisClient();
     } catch (err) {
       logger.warn({ err }, "Initial Redis connection failed. Will retry on demand.");
     }
-
-    const server = http.createServer(app);
-
-    server.listen(PORT, () => {
-      logger.info(`🚀 NEXORA API server running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
-      logger.info(`Health check available at http://localhost:${PORT}/api/v1/health/live`);
-    });
 
     // Graceful Shutdown Management
     const shutdown = async (signal: string) => {

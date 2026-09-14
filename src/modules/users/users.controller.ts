@@ -70,4 +70,28 @@ export class UsersController {
     await UsersService.deleteAddress(req.user.id, req.params.id);
     sendSuccess(res, { deleted: true }, 200, "Address deleted successfully");
   };
+
+  public static adminListUsers = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    const role = req.query.role as string | undefined;
+    const search = req.query.search as string | undefined;
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+
+    const result = await UsersService.adminListUsers({ role, search, page, limit });
+    sendSuccess(res, result);
+  };
+
+  public static adminCreateUser = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    const user = await UsersService.adminCreateUser(req.body);
+    sendSuccess(res, user, 201, "User created successfully");
+  };
+
+  public static adminUpdateUser = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    const user = await UsersService.adminUpdateUser(req.params.id, req.body);
+    sendSuccess(res, user, 200, "User updated successfully");
+  };
+
 }

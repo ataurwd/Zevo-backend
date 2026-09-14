@@ -1,4 +1,4 @@
-﻿import { Collection, ObjectId } from "mongodb";
+import { Collection, ObjectId } from "mongodb";
 import { getDb } from "../../infrastructure/db/client";
 import { CategoryDocument, CategoryResponse } from "./categories.types";
 
@@ -8,14 +8,14 @@ export class CategoriesRepository {
   }
 
   public static async findAllActive(): Promise<CategoryDocument[]> {
-    return this.getCollection()
+    return await this.getCollection()
       .find({ is_active: true })
       .sort({ sort_order: 1, name: 1 })
       .toArray();
   }
 
   public static async findRoots(): Promise<CategoryDocument[]> {
-    return this.getCollection()
+    return await this.getCollection()
       .find({ parent_id: null, is_active: true })
       .sort({ sort_order: 1, name: 1 })
       .toArray();
@@ -23,19 +23,19 @@ export class CategoriesRepository {
 
   public static async findByParentId(parentId: string | ObjectId): Promise<CategoryDocument[]> {
     const objectId = typeof parentId === "string" ? new ObjectId(parentId) : parentId;
-    return this.getCollection()
+    return await this.getCollection()
       .find({ parent_id: objectId, is_active: true })
       .sort({ sort_order: 1, name: 1 })
       .toArray();
   }
 
   public static async findBySlug(slug: string): Promise<CategoryDocument | null> {
-    return this.getCollection().findOne({ slug: slug.toLowerCase() });
+    return await this.getCollection().findOne({ slug: slug.toLowerCase() });
   }
 
   public static async findById(id: string | ObjectId): Promise<CategoryDocument | null> {
     const objectId = typeof id === "string" ? new ObjectId(id) : id;
-    return this.getCollection().findOne({ _id: objectId });
+    return await this.getCollection().findOne({ _id: objectId });
   }
 
   public static async create(data: Omit<CategoryDocument, "_id">): Promise<CategoryDocument> {
@@ -82,7 +82,7 @@ export class CategoriesRepository {
       image_url: doc.image_url || null,
       is_active: doc.is_active,
       sort_order: doc.sort_order,
-      created_at: doc.created_at.toISOString(),
+      created_at: doc.created_at ? new Date(doc.created_at).toISOString() : new Date().toISOString(),
     };
   }
 }

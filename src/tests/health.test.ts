@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
 import { app } from "../app";
 import * as dbClient from "../infrastructure/db/client";
@@ -47,6 +47,25 @@ describe("Health & System Endpoints", () => {
         redis: "up",
       });
       expect(response.body.error.code).toBe("SERVICE_UNAVAILABLE");
+    });
+  });
+
+  describe("GET /api/v1/health/metrics & /metrics", () => {
+    it("should return Prometheus exposition format from /api/v1/health/metrics", async () => {
+      const response = await request(app).get("/api/v1/health/metrics");
+
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toContain("text/plain");
+      expect(response.text).toContain("http_request_duration_seconds");
+      expect(response.text).toContain("service=\"nexora-api\"");
+    });
+
+    it("should return Prometheus metrics from direct /metrics endpoint", async () => {
+      const response = await request(app).get("/metrics");
+
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toContain("text/plain");
+      expect(response.text).toContain("nexora_active_orders_total");
     });
   });
 

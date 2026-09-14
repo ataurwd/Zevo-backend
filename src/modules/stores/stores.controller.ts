@@ -5,6 +5,11 @@ import { parsePagination, buildPaginationMeta } from "../../shared/utils/paginat
 import { UnauthorizedError, BadRequestError } from "../../shared/errors/errors";
 
 export class StoresController {
+  public static adminList = async (req: Request, res: Response): Promise<void> => {
+    const stores = await StoresService.adminListStores();
+    sendSuccess(res, stores);
+  };
+
   public static list = async (req: Request, res: Response): Promise<void> => {
     const { page, limit, skip } = parsePagination(req.query);
     const { items, total } = await StoresService.listStores(skip, limit);

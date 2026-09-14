@@ -1,4 +1,4 @@
-﻿import { ObjectId } from "mongodb";
+import { ObjectId } from "mongodb";
 
 export type ProductStatus = "draft" | "pending_review" | "approved" | "rejected" | "suspended";
 
@@ -10,6 +10,7 @@ export interface ProductVariant {
   price: number; // in cents
   compare_at_price?: number | null;
   weight_grams?: number | null;
+  quantity?: number | null;
   is_active: boolean;
 }
 
@@ -28,6 +29,19 @@ export interface ProductDocument {
   attributes: Array<{ name: string; value: string }>;
   variants: ProductVariant[];
   base_price: number;
+  compare_at_price?: number | null;
+  shipping?: {
+    weight?: number;
+    weight_unit?: "kg" | "lb" | "g";
+    dimensions?: {
+      length?: number;
+      breadth?: number;
+      width?: number;
+      unit?: "in" | "cm";
+    };
+  } | null;
+  selling_type?: "in_store" | "online" | "both" | null;
+  inventory_quantity?: number | null;
   rating_avg: number;
   rating_count: number;
   total_sold: number;
@@ -45,6 +59,7 @@ export interface ProductVariantResponse {
   price: number;
   compare_at_price?: number | null;
   weight_grams?: number | null;
+  quantity?: number | null;
   is_active: boolean;
 }
 
@@ -63,6 +78,19 @@ export interface ProductResponse {
   attributes: Array<{ name: string; value: string }>;
   variants: ProductVariantResponse[];
   base_price: number;
+  compare_at_price?: number | null;
+  shipping?: {
+    weight?: number;
+    weight_unit?: "kg" | "lb" | "g";
+    dimensions?: {
+      length?: number;
+      breadth?: number;
+      width?: number;
+      unit?: "in" | "cm";
+    };
+  } | null;
+  selling_type?: "in_store" | "online" | "both" | null;
+  inventory_quantity?: number | null;
   rating_avg: number;
   rating_count: number;
   total_sold: number;
@@ -76,6 +104,7 @@ export interface CreateVariantDTO {
   price: number; // in cents
   compare_at_price?: number;
   weight_grams?: number;
+  quantity?: number;
   is_active?: boolean;
 }
 
@@ -87,6 +116,10 @@ export interface CreateProductDTO {
   tags?: string[];
   attributes?: Array<{ name: string; value: string }>;
   variants: CreateVariantDTO[];
+  shipping?: any;
+  selling_type?: "in_store" | "online" | "both";
+  inventory_quantity?: number;
+  sku?: string;
 }
 
 export interface UpdateProductDTO {

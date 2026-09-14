@@ -9,6 +9,14 @@ import { createStoreSchema, updateStoreSchema } from "./stores.validator";
 
 const router = Router();
 
+// Admin routes
+router.get(
+  "/admin/all",
+  authenticate,
+  authorize("ADMIN", "SUPER_ADMIN"),
+  asyncHandler(StoresController.adminList)
+);
+
 // Public routes
 router.get("/", asyncHandler(StoresController.list));
 router.get("/:slug", asyncHandler(StoresController.getBySlug));

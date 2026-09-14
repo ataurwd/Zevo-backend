@@ -444,4 +444,17 @@ export class PaymentService {
     }
     return PaymentRepository.toPaymentResponse(payment);
   }
+
+  public static async getAllPayments(
+    page = 1,
+    limit = 50,
+    status?: string
+  ): Promise<{ payments: PaymentResponse[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const { payments, total } = await PaymentRepository.findAll(skip, limit, status);
+    return {
+      payments: payments.map(PaymentRepository.toPaymentResponse),
+      total,
+    };
+  }
 }

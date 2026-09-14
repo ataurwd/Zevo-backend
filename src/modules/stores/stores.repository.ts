@@ -47,6 +47,10 @@ export class StoresRepository {
     return res;
   }
 
+  public static async listAll(): Promise<StoreDocument[]> {
+    return this.getCollection().find({}).sort({ created_at: -1 }).toArray();
+  }
+
   public static async listPublic(skip = 0, limit = 20): Promise<{ items: StoreDocument[]; total: number }> {
     const col = this.getCollection();
     const [items, total] = await Promise.all([

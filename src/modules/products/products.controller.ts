@@ -1,4 +1,4 @@
-﻿import { Request, Response } from "express";
+import { Request, Response } from "express";
 import { ProductsService } from "./products.service";
 import { sendSuccess, sendPaginated } from "../../shared/utils/response";
 import { buildPaginationMeta } from "../../shared/utils/pagination";
@@ -93,5 +93,23 @@ export class ProductsController {
     if (!req.user) throw new UnauthorizedError("Authentication required");
     const rejected = await ProductsService.adminReject(req.params.id, req.user.id, req.body.reason);
     sendSuccess(res, rejected, 200, "Product rejected");
+  };
+
+  public static adminCreate = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    const created = await ProductsService.adminCreate(req.user.id, req.body);
+    sendSuccess(res, created, 201, "Product created successfully");
+  };
+
+  public static adminUpdate = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    const updated = await ProductsService.adminUpdate(req.params.id, req.user.id, req.body);
+    sendSuccess(res, updated, 200, "Product updated successfully");
+  };
+
+  public static adminDelete = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    await ProductsService.adminDelete(req.params.id, req.user.id);
+    sendSuccess(res, { deleted: true }, 200, "Product deleted successfully");
   };
 }

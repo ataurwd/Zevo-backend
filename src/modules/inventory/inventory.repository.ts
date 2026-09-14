@@ -34,9 +34,11 @@ export class InventoryRepository {
   }
 
   public static async findByVariantId(
-    variantId: ObjectId
+    variantId: string | ObjectId
   ): Promise<InventoryDocument | null> {
-    return this.collection.findOne({ variant_id: variantId });
+    const vObj = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    const vStr = variantId.toString();
+    return this.collection.findOne({ variant_id: { $in: [vObj, vStr] } as any });
   }
 
   public static async findBySellerId(
@@ -92,13 +94,34 @@ export class InventoryRepository {
     return result || null;
   }
 
-  public static async atomicReserve(
-    variantId: ObjectId,
+  public static async setStock(
+    variantId: string | ObjectId,
     quantity: number
   ): Promise<InventoryDocument | null> {
+    const vObj = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    const vStr = variantId.toString();
+    const result = await this.collection.findOneAndUpdate(
+      { variant_id: { $in: [vObj, vStr] } as any },
+      {
+        $set: {
+          quantity_available: quantity,
+          updated_at: new Date(),
+        },
+      },
+      { returnDocument: "after" }
+    );
+    return result || null;
+  }
+
+  public static async atomicReserve(
+    variantId: string | ObjectId,
+    quantity: number
+  ): Promise<InventoryDocument | null> {
+    const vObj = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    const vStr = variantId.toString();
     const result = await this.collection.findOneAndUpdate(
       {
-        variant_id: variantId,
+        variant_id: { $in: [vObj, vStr] } as any,
         quantity_available: { $gte: quantity },
       },
       {
@@ -115,12 +138,14 @@ export class InventoryRepository {
   }
 
   public static async atomicRelease(
-    variantId: ObjectId,
+    variantId: string | ObjectId,
     quantity: number
   ): Promise<InventoryDocument | null> {
+    const vObj = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    const vStr = variantId.toString();
     const result = await this.collection.findOneAndUpdate(
       {
-        variant_id: variantId,
+        variant_id: { $in: [vObj, vStr] } as any,
         quantity_reserved: { $gte: quantity },
       },
       {
@@ -137,12 +162,14 @@ export class InventoryRepository {
   }
 
   public static async atomicDeduct(
-    variantId: ObjectId,
+    variantId: string | ObjectId,
     quantity: number
   ): Promise<InventoryDocument | null> {
+    const vObj = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    const vStr = variantId.toString();
     const result = await this.collection.findOneAndUpdate(
       {
-        variant_id: variantId,
+        variant_id: { $in: [vObj, vStr] } as any,
         quantity_reserved: { $gte: quantity },
       },
       {

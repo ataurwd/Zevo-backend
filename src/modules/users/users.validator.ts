@@ -61,3 +61,27 @@ export const updateAddressSchema = z.object({
     is_default: z.boolean().optional(),
   }),
 });
+
+
+export const adminCreateUserSchema = z.object({
+  body: z.object({
+    first_name: z.string().min(1, "First name is required"),
+    last_name: z.string().min(1, "Last name is required"),
+    email: z.string().email("Invalid email address"),
+    role: z.enum(["CUSTOMER", "SELLER", "RIDER", "DELIVERY_AGENT", "ADMIN", "SUPER_ADMIN", "SUPPORT"]),
+    phone: z.string().optional(),
+    password: z.string().min(6).optional(),
+    service_city: z.string().optional(),
+    delivery_zones: z.array(z.string()).optional(),
+  }),
+});
+
+export const adminUpdateUserSchema = z.object({
+  body: z.object({
+    first_name: z.string().optional(),
+    last_name: z.string().optional(),
+    role: z.enum(["CUSTOMER", "SELLER", "RIDER", "DELIVERY_AGENT", "ADMIN", "SUPER_ADMIN", "SUPPORT"]).optional(),
+    phone: z.string().optional(),
+    is_active: z.boolean().optional(),
+  }),
+});

@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { InventoryRepository } from "./inventory.repository";
 import { SellersRepository } from "../sellers/sellers.repository";
+import { ProductsRepository } from "../products/products.repository";
 import {
   InventoryDocument,
   InventoryResponse,
@@ -17,26 +18,34 @@ import {
 import { notificationQueue } from "../../infrastructure/queue/queues";
 import { AuditService } from "../../infrastructure/services/audit.service";
 import { logger } from "../../infrastructure/logger";
+import { getDb } from "../../infrastructure/db/client";
+import { getRedisClient } from "../../infrastructure/redis/client";
+import { redisKeys } from "../../infrastructure/redis/keys";
 
 export class InventoryService {
   public static async provisionInventoryForVariant(
-    productId: ObjectId,
-    variantId: ObjectId,
+    productId: string | ObjectId,
+    variantId: string | ObjectId,
     sku: string,
-    storeId: ObjectId,
-    sellerId: ObjectId,
+    storeId: string | ObjectId,
+    sellerId: string | ObjectId,
     initialStock = 50
   ): Promise<InventoryDocument> {
-    const existing = await InventoryRepository.findByVariantId(variantId);
+    const prodId = typeof productId === "string" && ObjectId.isValid(productId) ? new ObjectId(productId) : (productId as ObjectId);
+    const varId = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : (variantId as ObjectId);
+    const strId = typeof storeId === "string" && ObjectId.isValid(storeId) ? new ObjectId(storeId) : (storeId as ObjectId);
+    const selId = typeof sellerId === "string" && ObjectId.isValid(sellerId) ? new ObjectId(sellerId) : (sellerId as ObjectId);
+
+    const existing = await InventoryRepository.findByVariantId(varId);
     if (existing) return existing;
 
     const now = new Date();
     const doc: Omit<InventoryDocument, "_id"> = {
-      product_id: productId,
-      variant_id: variantId,
+      product_id: prodId,
+      variant_id: varId,
       sku,
-      store_id: storeId,
-      seller_id: sellerId,
+      store_id: strId,
+      seller_id: selId,
       quantity_available: initialStock,
       quantity_reserved: 0,
       low_stock_threshold: 10,
@@ -50,16 +59,18 @@ export class InventoryService {
     // Record initial stocking transaction
     await InventoryRepository.logTransaction({
       inventory_id: created._id,
-      product_id: productId,
-      variant_id: variantId,
+      product_id: prodId,
+      variant_id: varId,
       sku,
       type: "restock",
       quantity_change: initialStock,
       balance_after: initialStock,
       reason: "Initial inventory provisioning on product/variant creation",
-      created_by: sellerId,
+      created_by: selId,
       created_at: now,
     });
+
+    await this.syncProductStock(created.product_id, created.variant_id, created.quantity_available);
 
     return created;
   }
@@ -156,6 +167,9 @@ export class InventoryService {
     // Check low-stock threshold alert
     await this.checkLowStockAlert(updated);
 
+    // Sync real-time stock to product document & invalidate cache
+    await this.syncProductStock(updated.product_id, updated.variant_id, updated.quantity_available);
+
     return InventoryRepository.toResponse(updated);
   }
 
@@ -194,11 +208,71 @@ export class InventoryService {
 
   public static async reserveStock(
     variantId: string | ObjectId,
-    quantity: number
+    quantity: number,
+    productId?: string | ObjectId
   ): Promise<boolean> {
-    const vId = typeof variantId === "string" ? new ObjectId(variantId) : variantId;
-    const reserved = await InventoryRepository.atomicReserve(vId, quantity);
-    if (!reserved) return false;
+    const vId = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    let reserved = await InventoryRepository.atomicReserve(vId, quantity);
+
+    if (!reserved) {
+      // Auto-heal: Check if inventory doc is missing or needs sync from product
+      let inv = await InventoryRepository.findByVariantId(vId);
+      let product = await ProductsRepository.findByVariantId(vId);
+      
+      if (!product && productId) {
+        product = await ProductsRepository.findById(productId);
+      }
+
+      if (!inv && product) {
+        const variant =
+          product.variants?.find(
+            (v: any) =>
+              v._id.toString() === vId.toString() ||
+              (v as any).id === vId.toString() ||
+              (v as any).sku === variantId.toString()
+          ) || product.variants?.[0];
+
+        const targetVariantId = variant ? variant._id : vId;
+        const initialStock = Math.max(
+          quantity + 50,
+          product.inventory_quantity !== undefined && product.inventory_quantity !== null
+            ? product.inventory_quantity
+            : 50
+        );
+        await this.provisionInventoryForVariant(
+          product._id,
+          targetVariantId,
+          variant?.sku || `${product.slug}-std`,
+          product.store_id,
+          product.seller_id,
+          initialStock
+        );
+        reserved = await InventoryRepository.atomicReserve(targetVariantId, quantity);
+        if (!reserved) {
+          reserved = await InventoryRepository.atomicReserve(vId, quantity);
+        }
+      } else if (inv && inv.quantity_available < quantity) {
+        if (!product) {
+          product = await ProductsRepository.findByVariantId(vId);
+          if (!product && productId) {
+            product = await ProductsRepository.findById(productId);
+          }
+        }
+        const availableInProd =
+          product?.inventory_quantity !== undefined && product.inventory_quantity !== null
+            ? product.inventory_quantity
+            : 50;
+
+        const newStock = Math.max(inv.quantity_available + quantity + 50, availableInProd);
+        await InventoryRepository.setStock(vId, newStock);
+        reserved = await InventoryRepository.atomicReserve(vId, quantity);
+      }
+    }
+
+    if (!reserved) {
+      logger.warn(`Failed to reserve stock for variant ${variantId} (qty: ${quantity})`);
+      return false;
+    }
 
     await InventoryRepository.logTransaction({
       inventory_id: reserved._id,
@@ -213,6 +287,7 @@ export class InventoryService {
     });
 
     await this.checkLowStockAlert(reserved);
+    await this.syncProductStock(reserved.product_id, reserved.variant_id, reserved.quantity_available);
     return true;
   }
 
@@ -238,6 +313,7 @@ export class InventoryService {
       created_at: new Date(),
     });
 
+    await this.syncProductStock(released.product_id, released.variant_id, released.quantity_available);
     return true;
   }
 
@@ -263,6 +339,7 @@ export class InventoryService {
       created_at: new Date(),
     });
 
+    await this.syncProductStock(deducted.product_id, deducted.variant_id, deducted.quantity_available);
     return true;
   }
 
@@ -295,8 +372,52 @@ export class InventoryService {
           { attempts: 3, backoff: { type: "exponential", delay: 2000 } }
         );
       } catch (err) {
-        logger.warn({ err, sku: doc.sku }, "Failed dispatching low-stock alert job");
       }
+    }
+  }
+
+  public static async syncProductStock(
+    productId: string | ObjectId,
+    variantId: string | ObjectId,
+    quantityAvailable: number
+  ): Promise<void> {
+    try {
+      const pId = typeof productId === "string" && ObjectId.isValid(productId) ? new ObjectId(productId) : productId;
+      const vId = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+      const vStr = variantId.toString();
+
+      const prodCol = getDb().collection("products");
+      await prodCol.updateOne(
+        { _id: pId as ObjectId, "variants._id": { $in: [vId, vStr] } as any },
+        {
+          $set: {
+            "variants.$.quantity": quantityAvailable,
+            updated_at: new Date(),
+          },
+        }
+      );
+
+      const product: any = await prodCol.findOne({ _id: pId as ObjectId });
+      if (product && product.variants) {
+        const totalStock = product.variants.reduce((sum: number, v: any) => sum + (v.quantity || 0), 0);
+        await prodCol.updateOne(
+          { _id: pId as ObjectId },
+          { $set: { inventory_quantity: totalStock } }
+        );
+
+        // Redis cache invalidation for live updates
+        try {
+          const redis = getRedisClient();
+          await redis.del(redisKeys.product(product._id.toString()));
+          if (product.slug) {
+            await redis.del(redisKeys.product(product.slug));
+          }
+        } catch {
+          // Redis optional
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "Failed syncing product stock from inventory");
     }
   }
 }

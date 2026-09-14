@@ -1,10 +1,9 @@
-﻿import { Collection, ObjectId, Filter } from "mongodb";
+import { Collection, ObjectId, Filter } from "mongodb";
 import { getDb } from "../../infrastructure/db/client";
 import {
   ProductDocument,
   ProductResponse,
   ProductFilterQuery,
-  ProductVariant,
 } from "./products.types";
 
 export class ProductsRepository {
@@ -13,18 +12,77 @@ export class ProductsRepository {
   }
 
   public static async findById(id: string | ObjectId): Promise<ProductDocument | null> {
+    if (typeof id === "string" && (!ObjectId.isValid(id) || id.length !== 24)) {
+      return null;
+    }
     const objectId = typeof id === "string" ? new ObjectId(id) : id;
-    return this.getCollection().findOne({ _id: objectId, is_deleted: false });
+    return await this.getCollection().findOne({ _id: objectId, is_deleted: false });
   }
 
-  public static async findBySlug(slug: string, storeId: string | ObjectId): Promise<ProductDocument | null> {
-    const storeObjectId = typeof storeId === "string" ? new ObjectId(storeId) : storeId;
-    return this.getCollection().findOne({ slug, store_id: storeObjectId, is_deleted: false });
+  public static async findByIdOrSlug(identifier: string): Promise<ProductDocument | null> {
+    const col = this.getCollection();
+    const clean = decodeURIComponent(identifier).trim();
+
+    // 1. If valid 24-hex ObjectId, check by _id first
+    if (ObjectId.isValid(clean) && clean.length === 24) {
+      const byId = await col.findOne({ _id: new ObjectId(clean), is_deleted: false });
+      if (byId) return byId;
+    }
+
+    // 2. Try exact slug match
+    const bySlug = await col.findOne({ slug: clean, is_deleted: false });
+    if (bySlug) return bySlug;
+
+    // 3. Try case-insensitive slug match
+    const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const bySlugCi = await col.findOne({
+      slug: { $regex: new RegExp(`^${escaped}$`, "i") },
+      is_deleted: false,
+    });
+    if (bySlugCi) return bySlugCi;
+
+    // 4. Try exact or case-insensitive name match (converting dashes to spaces or as is)
+    const nameWithSpaces = clean.replace(/[-_]+/g, " ");
+    const escapedNameWithSpaces = nameWithSpaces.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const byName = await col.findOne({
+      $or: [
+        { name: { $regex: new RegExp(`^${escaped}$`, "i") } },
+        { name: { $regex: new RegExp(`^${escapedNameWithSpaces}$`, "i") } },
+      ],
+      is_deleted: false,
+    });
+    if (byName) return byName;
+
+    // 5. Try slug prefix match (e.g. if slug has random suffix)
+    const bySlugPrefix = await col.findOne({
+      slug: { $regex: new RegExp(`^${escaped}`, "i") },
+      is_deleted: false,
+    });
+    if (bySlugPrefix) return bySlugPrefix;
+
+    return null;
+  }
+
+  public static async findBySlug(slug: string, storeId?: string | ObjectId): Promise<ProductDocument | null> {
+    const query: Filter<ProductDocument> = { slug, is_deleted: false };
+    if (storeId) {
+      query.store_id = typeof storeId === "string" ? new ObjectId(storeId) : storeId;
+    }
+    return await this.getCollection().findOne(query);
+  }
+
+  public static async findByVariantId(variantId: string | ObjectId): Promise<ProductDocument | null> {
+    const objectId = typeof variantId === "string" && ObjectId.isValid(variantId) ? new ObjectId(variantId) : variantId;
+    const vStr = variantId.toString();
+    return await this.getCollection().findOne({
+      "variants._id": { $in: [objectId, vStr] } as any,
+      is_deleted: false,
+    });
   }
 
   public static async findBySellerId(sellerId: string | ObjectId): Promise<ProductDocument[]> {
     const objectId = typeof sellerId === "string" ? new ObjectId(sellerId) : sellerId;
-    return this.getCollection()
+    return await this.getCollection()
       .find({ seller_id: objectId, is_deleted: false })
       .sort({ created_at: -1 })
       .toArray();
@@ -56,7 +114,7 @@ export class ProductsRepository {
     return res;
   }
 
-  public static async softDelete(id: string | ObjectId): Promise<boolean> {
+  public static async delete(id: string | ObjectId): Promise<boolean> {
     const objectId = typeof id === "string" ? new ObjectId(id) : id;
     const res = await this.getCollection().updateOne(
       { _id: objectId },
@@ -71,6 +129,10 @@ export class ProductsRepository {
     return res.modifiedCount > 0;
   }
 
+  public static softDelete(id: string | ObjectId): Promise<boolean> {
+    return this.delete(id);
+  }
+
   public static async searchPublic(
     filter: ProductFilterQuery
   ): Promise<{ items: ProductDocument[]; total: number }> {
@@ -80,11 +142,13 @@ export class ProductsRepository {
     };
 
     if (filter.category) {
-      // Allow category filter by ID or slug lookup
       try {
         query.category_id = new ObjectId(filter.category);
       } catch {
-        // Ignored if slug
+        (query as any).$or = [
+          { category_id: filter.category },
+          { tags: filter.category.toLowerCase() },
+        ];
       }
     }
 
@@ -92,7 +156,7 @@ export class ProductsRepository {
       try {
         query.store_id = new ObjectId(filter.store);
       } catch {
-        // Ignore
+        // Ignore invalid store ObjectId
       }
     }
 
@@ -149,9 +213,9 @@ export class ProductsRepository {
   public static toResponse(doc: ProductDocument): ProductResponse {
     return {
       id: doc._id.toString(),
-      store_id: doc.store_id.toString(),
-      seller_id: doc.seller_id.toString(),
-      category_id: doc.category_id.toString(),
+      store_id: doc.store_id ? doc.store_id.toString() : "",
+      seller_id: doc.seller_id ? doc.seller_id.toString() : "",
+      category_id: doc.category_id ? doc.category_id.toString() : "",
       name: doc.name,
       slug: doc.slug,
       description: doc.description,
@@ -161,20 +225,25 @@ export class ProductsRepository {
       tags: doc.tags || [],
       attributes: doc.attributes || [],
       variants: (doc.variants || []).map((v) => ({
-        id: v._id.toString(),
+        id: v._id ? v._id.toString() : "",
         sku: v.sku,
         name: v.name,
         attributes: v.attributes || {},
         price: v.price,
         compare_at_price: v.compare_at_price || null,
         weight_grams: v.weight_grams || null,
+        quantity: v.quantity ?? null,
         is_active: v.is_active,
       })),
       base_price: doc.base_price,
+      compare_at_price: doc.compare_at_price || null,
+      shipping: doc.shipping || null,
+      selling_type: doc.selling_type || null,
+      inventory_quantity: doc.inventory_quantity ?? null,
       rating_avg: doc.rating_avg || 0,
       rating_count: doc.rating_count || 0,
       total_sold: doc.total_sold || 0,
-      created_at: doc.created_at.toISOString(),
+      created_at: doc.created_at ? new Date(doc.created_at).toISOString() : new Date().toISOString(),
     };
   }
 }

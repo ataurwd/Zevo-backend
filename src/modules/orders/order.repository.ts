@@ -102,7 +102,16 @@ export class OrderRepository {
   public static async findSubOrderById(
     subOrderId: ObjectId
   ): Promise<SubOrderDocument | null> {
-    return this.subOrdersCollection.findOne({ _id: subOrderId });
+    const subOrder = await this.subOrdersCollection.findOne({ _id: subOrderId });
+    if (subOrder && !subOrder.delivery_address) {
+      const parentOrder = await this.findById(subOrder.order_id);
+      if (parentOrder) {
+        subOrder.delivery_address = parentOrder.delivery_address;
+        subOrder.customer_notes = subOrder.customer_notes || parentOrder.notes;
+        subOrder.customer_id = subOrder.customer_id || parentOrder.customer_id;
+      }
+    }
+    return subOrder;
   }
 
   public static async findSubOrdersBySellerId(
@@ -125,6 +134,32 @@ export class OrderRepository {
         .toArray(),
       this.subOrdersCollection.countDocuments(filter),
     ]);
+
+    // Backfill delivery_address and customer_notes from parent orders for any legacy sub-orders
+    const missingParentIds = subOrders
+      .filter((s) => !s.delivery_address && s.order_id)
+      .map((s) => s.order_id);
+
+    if (missingParentIds.length > 0) {
+      const parentOrders = await this.ordersCollection
+        .find({ _id: { $in: missingParentIds } })
+        .toArray();
+      const parentMap = new Map<string, OrderDocument>();
+      for (const po of parentOrders) {
+        parentMap.set(po._id.toString(), po);
+      }
+
+      for (const s of subOrders) {
+        if (!s.delivery_address && s.order_id) {
+          const po = parentMap.get(s.order_id.toString());
+          if (po) {
+            s.delivery_address = po.delivery_address;
+            s.customer_notes = s.customer_notes || po.notes;
+            s.customer_id = s.customer_id || po.customer_id;
+          }
+        }
+      }
+    }
 
     return { subOrders, total };
   }
@@ -216,11 +251,24 @@ export class OrderRepository {
     doc: OrderDocument,
     subOrders?: SubOrderDocument[]
   ): OrderResponse {
+    const primarySub = subOrders?.[0];
+    let effectiveStatus: any = doc.status;
+
+    // Harmonize overall status with sub-orders if parent order hasn't transitioned yet
+    if (effectiveStatus === "pending" || effectiveStatus === "confirmed") {
+      if (primarySub?.status && primarySub.status !== "pending") {
+        if (primarySub.status === "delivered") effectiveStatus = "completed";
+        else effectiveStatus = primarySub.status;
+      }
+    }
+
+    const assignedRider = (doc as any).assigned_rider || (primarySub as any)?.assigned_rider || null;
+
     return {
       id: doc._id.toString(),
       order_number: doc.order_number,
       customer_id: doc.customer_id.toString(),
-      status: doc.status,
+      status: effectiveStatus,
       payment_status: doc.payment_status,
       subtotal: doc.subtotal,
       discount_amount: doc.discount_amount,
@@ -234,6 +282,13 @@ export class OrderRepository {
       notes: doc.notes,
       cancelled_at: doc.cancelled_at?.toISOString() || null,
       cancellation_reason: doc.cancellation_reason || null,
+      assigned_rider: assignedRider,
+      confirmed_at: (doc as any).confirmed_at?.toISOString() || primarySub?.confirmed_at?.toISOString() || null,
+      preparing_at: (doc as any).preparing_at?.toISOString() || primarySub?.preparing_at?.toISOString() || null,
+      ready_at: (doc as any).ready_at?.toISOString() || primarySub?.ready_at?.toISOString() || null,
+      picked_up_at: (doc as any).picked_up_at?.toISOString() || primarySub?.picked_up_at?.toISOString() || null,
+      in_transit_at: (doc as any).in_transit_at?.toISOString() || (primarySub as any)?.in_transit_at?.toISOString() || null,
+      delivered_at: (doc as any).delivered_at?.toISOString() || primarySub?.delivered_at?.toISOString() || null,
       created_at: doc.created_at.toISOString(),
       updated_at: doc.updated_at.toISOString(),
       sub_orders: subOrders ? subOrders.map(this.toSubOrderResponse) : undefined,
@@ -247,6 +302,9 @@ export class OrderRepository {
       order_number: doc.order_number,
       seller_id: doc.seller_id.toString(),
       store_id: doc.store_id.toString(),
+      customer_id: doc.customer_id?.toString(),
+      delivery_address: doc.delivery_address,
+      customer_notes: doc.customer_notes || null,
       status: doc.status,
       items: doc.items.map((i) => ({
         product_id: i.product_id.toString(),
@@ -268,7 +326,11 @@ export class OrderRepository {
       confirmed_at: doc.confirmed_at?.toISOString() || null,
       preparing_at: doc.preparing_at?.toISOString() || null,
       ready_at: doc.ready_at?.toISOString() || null,
+      picked_up_at: doc.picked_up_at?.toISOString() || null,
       delivered_at: doc.delivered_at?.toISOString() || null,
+      cancelled_at: doc.cancelled_at?.toISOString() || null,
+      cancellation_reason: doc.cancellation_reason || null,
+      assigned_rider: (doc as any).assigned_rider || null,
       created_at: doc.created_at.toISOString(),
       updated_at: doc.updated_at.toISOString(),
     };

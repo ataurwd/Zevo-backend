@@ -16,6 +16,12 @@ export const registerSchema = z.object({
       .optional()
       .default("CUSTOMER"),
     phone: z.string().optional(),
+    business_name: z.string().optional(),
+    delivery_zones: z.array(z.string()).optional(),
+    service_city: z.string().optional(),
+    vehicle_type: z.enum(["bicycle", "motorcycle", "scooter", "car"]).optional(),
+    vehicle_number: z.string().optional(),
+    license_number: z.string().optional(),
   }),
 });
 

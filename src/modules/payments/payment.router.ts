@@ -34,4 +34,12 @@ router.post(
   PaymentController.adminRefund
 );
 
+// Admin List All Payments
+router.get(
+  "/admin/all",
+  authenticate,
+  authorize("ADMIN", "SUPER_ADMIN"),
+  PaymentController.adminListAllPayments
+);
+
 export const paymentRouter = router;

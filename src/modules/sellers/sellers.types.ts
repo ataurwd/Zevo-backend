@@ -37,6 +37,9 @@ export interface SellerResponse {
   total_earnings: number;
   total_commission_paid: number;
   pending_balance: number;
+  user_name?: string;
+  user_email?: string;
+  user_phone?: string;
   created_at: string;
 }
 

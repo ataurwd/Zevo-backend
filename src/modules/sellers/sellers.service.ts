@@ -1,6 +1,7 @@
 ﻿import crypto from "crypto";
 import { ObjectId } from "mongodb";
 import { SellersRepository } from "./sellers.repository";
+import { StoresRepository } from "../stores/stores.repository";
 import { UsersRepository } from "../users/users.repository";
 import {
   OnboardSellerDTO,
@@ -123,7 +124,20 @@ export class SellersService {
   // Admin Actions
   public static async adminListSellers(status?: SellerStatus): Promise<SellerResponse[]> {
     const list = await SellersRepository.listByStatus(status);
-    return list.map(SellersRepository.toResponse);
+    const userIds = list.map((s) => s.user_id);
+    const users = await UsersRepository.findByIds(userIds);
+    const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
+    return list.map((doc) => {
+      const resp = SellersRepository.toResponse(doc);
+      const user = userMap.get(doc.user_id.toString());
+      if (user) {
+        resp.user_name = `${user.first_name} ${user.last_name}`;
+        resp.user_email = user.email;
+        resp.user_phone = user.phone || undefined;
+      }
+      return resp;
+    });
   }
 
   public static async adminApproveSeller(
@@ -158,6 +172,41 @@ export class SellersService {
       } catch (err) {
         logger.warn({ err }, "Could not enqueue seller approved email");
       }
+    }
+
+    // Ensure associated store is marked is_open: true
+    try {
+      const existingStore = await StoresRepository.findBySellerId(sellerId);
+      if (existingStore) {
+        await StoresRepository.update(existingStore._id.toString(), { is_open: true });
+      } else {
+        const baseSlug = seller.business_name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "store";
+        await StoresRepository.create({
+          seller_id: seller._id,
+          name: seller.business_name,
+          slug: `${baseSlug}-${seller._id.toString().slice(-4)}`,
+          description: `Official storefront for ${seller.business_name}`,
+          logo_url: null,
+          banner_url: null,
+          contact_email: user?.email || null,
+          contact_phone: user?.phone || null,
+          address: {
+            line1: "Main Office",
+            city: "Dhaka",
+            state: "Dhaka",
+            postal_code: "1200",
+            country: "Bangladesh",
+          },
+          location: null,
+          rating_avg: 0,
+          rating_count: 0,
+          is_open: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+    } catch (err) {
+      logger.warn({ err }, "Could not auto-open store on seller approval");
     }
 
     await AuditService.log({

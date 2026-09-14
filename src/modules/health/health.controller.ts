@@ -1,7 +1,8 @@
-﻿import { Request, Response } from "express";
+import { Request, Response } from "express";
 import { sendSuccess, sendError } from "../../shared/utils/response";
 import { checkDBHealth } from "../../infrastructure/db/client";
 import { checkRedisHealth } from "../../infrastructure/redis/client";
+import { registry } from "../../infrastructure/metrics";
 
 export class HealthController {
   public static live = (_req: Request, res: Response): void => {
@@ -46,5 +47,11 @@ export class HealthController {
       services,
       timestamp: new Date().toISOString(),
     });
+  };
+
+  public static metrics = async (_req: Request, res: Response): Promise<void> => {
+    res.set("Content-Type", registry.contentType);
+    const metricsData = await registry.metrics();
+    res.end(metricsData);
   };
 }

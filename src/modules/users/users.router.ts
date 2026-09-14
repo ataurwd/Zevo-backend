@@ -1,6 +1,7 @@
 ﻿import { Router } from "express";
 import { UsersController } from "./users.controller";
 import { authenticate } from "../../shared/middleware/authenticate";
+import { authorize } from "../../shared/middleware/authorize";
 import { validate } from "../../shared/middleware/validate";
 import { asyncHandler } from "../../shared/utils/asyncHandler";
 import { uploadAvatar } from "../../infrastructure/storage/upload";
@@ -9,12 +10,20 @@ import {
   changeUserPasswordSchema,
   createAddressSchema,
   updateAddressSchema,
+  adminCreateUserSchema,
+  adminUpdateUserSchema,
 } from "./users.validator";
 
 const router = Router();
 
 // All routes require authentication
 router.use(authenticate);
+
+
+// Admin User Management Routes (Placed before /me to prevent conflicts)
+router.get("/admin", authorize("ADMIN", "SUPER_ADMIN"), asyncHandler(UsersController.adminListUsers));
+router.post("/admin", authorize("ADMIN", "SUPER_ADMIN"), validate(adminCreateUserSchema), asyncHandler(UsersController.adminCreateUser));
+router.patch("/admin/:id", authorize("ADMIN", "SUPER_ADMIN"), validate(adminUpdateUserSchema), asyncHandler(UsersController.adminUpdateUser));
 
 // Profile
 router.get("/me", asyncHandler(UsersController.getProfile));

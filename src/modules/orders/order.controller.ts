@@ -23,8 +23,9 @@ export class OrderController {
 
   public static getCustomerOrder = asyncHandler(async (req: Request, res: Response) => {
     const customerId = req.user!.id;
+    const userRole = req.user!.role;
     const orderId = req.params.id;
-    const result = await OrderService.getCustomerOrderById(customerId, orderId);
+    const result = await OrderService.getCustomerOrderById(customerId, orderId, userRole);
     sendSuccess(res, result, 200, "Order retrieved successfully");
   });
 
@@ -73,6 +74,36 @@ export class OrderController {
     const subOrderId = req.params.subOrderId;
     const result = await OrderService.updateSubOrderStatus(sellerUserId, subOrderId, "ready_for_pickup");
     sendSuccess(res, result, 200, "Sub-order status updated to ready for pickup");
+  });
+
+  public static shipSubOrder = asyncHandler(async (req: Request, res: Response) => {
+    const sellerUserId = req.user!.id;
+    const subOrderId = req.params.subOrderId;
+    const result = await OrderService.updateSubOrderStatus(sellerUserId, subOrderId, "picked_up");
+    sendSuccess(res, result, 200, "Sub-order marked as in transit / shipped");
+  });
+
+  public static deliverSubOrder = asyncHandler(async (req: Request, res: Response) => {
+    const sellerUserId = req.user!.id;
+    const subOrderId = req.params.subOrderId;
+    const result = await OrderService.updateSubOrderStatus(sellerUserId, subOrderId, "delivered");
+    sendSuccess(res, result, 200, "Sub-order marked as delivered successfully");
+  });
+
+  public static cancelSubOrder = asyncHandler(async (req: Request, res: Response) => {
+    const sellerUserId = req.user!.id;
+    const subOrderId = req.params.subOrderId;
+    const { reason } = req.body || {};
+    const result = await OrderService.updateSubOrderStatus(sellerUserId, subOrderId, "cancelled", reason);
+    sendSuccess(res, result, 200, "Sub-order cancelled successfully");
+  });
+
+  public static updateSubOrderStatusGeneric = asyncHandler(async (req: Request, res: Response) => {
+    const sellerUserId = req.user!.id;
+    const subOrderId = req.params.subOrderId;
+    const { status, reason } = req.body || {};
+    const result = await OrderService.updateSubOrderStatus(sellerUserId, subOrderId, status, reason);
+    sendSuccess(res, result, 200, `Sub-order status updated to ${status}`);
   });
 
   // Admin Handlers

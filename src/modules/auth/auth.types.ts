@@ -41,6 +41,12 @@ export interface RegisterDTO {
   last_name: string;
   role?: UserRole;
   phone?: string;
+  business_name?: string;
+  delivery_zones?: string[];
+  service_city?: string;
+  vehicle_type?: "bicycle" | "motorcycle" | "scooter" | "car";
+  vehicle_number?: string;
+  license_number?: string;
 }
 
 export interface LoginDTO {

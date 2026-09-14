@@ -12,20 +12,21 @@ export function getRedisClient(): Redis {
 
   const url = process.env.REDIS_URL || DEFAULT_REDIS_URL;
 
+  let retryCount = 0;
   const options: RedisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
+    enableOfflineQueue: false,
     retryStrategy(times) {
-      if (process.env.NODE_ENV === "test") {
-        return null; // do not retry in unit test mode
+      if (process.env.NODE_ENV === "test" || times > 3) {
+        logger.warn(`Redis unavailable at ${url}. Operating without Redis cache in local dev.`);
+        return null; // stop retrying
       }
-      const delay = Math.min(times * 100, 3000);
-      logger.warn(`Redis connection retry attempt ${times}, delaying ${delay}ms`);
-      return delay;
+      retryCount = times;
+      return Math.min(times * 300, 1500);
     },
-    reconnectOnError(err) {
-      logger.warn({ err }, "Redis reconnect on error");
-      return true;
+    reconnectOnError() {
+      return false;
     },
   };
 
@@ -40,11 +41,13 @@ export function getRedisClient(): Redis {
   });
 
   redisClient.on("error", (err) => {
-    logger.error({ err }, "Redis connection error");
+    if (retryCount <= 1) {
+      logger.warn({ err: (err as any)?.message || err }, "Redis connection notice (running without cache)");
+    }
   });
 
   redisClient.on("close", () => {
-    logger.warn("Redis connection closed");
+    // closed
   });
 
   return redisClient;

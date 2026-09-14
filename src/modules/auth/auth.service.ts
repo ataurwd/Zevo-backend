@@ -58,6 +58,79 @@ export class AuthService {
       updated_at: now,
     });
 
+        if (createdUser.role === "SELLER") {
+      try {
+        const { SellersRepository } = await import("../sellers/sellers.repository");
+        const { StoresRepository } = await import("../stores/stores.repository");
+        const existingSeller = await SellersRepository.findByUserId(createdUser._id);
+        if (!existingSeller) {
+          const businessName =
+            dto.business_name?.trim() || `${createdUser.first_name} ${createdUser.last_name}'s Store`;
+          const createdSeller = await SellersRepository.create({
+            user_id: createdUser._id,
+            business_name: businessName,
+            business_type: "individual",
+            status: "pending",
+            stripe_account_id: null,
+            stripe_onboarding_complete: false,
+            bank_verified: false,
+            total_earnings: 0,
+            total_commission_paid: 0,
+            pending_balance: 0,
+            created_at: now,
+            updated_at: now,
+          });
+          logger.info({ userId: createdUser._id, businessName }, "Seller profile auto-provisioned with status pending");
+
+          // Also auto-provision storefront in stores collection
+          const baseSlug = businessName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "store";
+          const uniqueStoreSlug = `${baseSlug}-${createdSeller._id.toString().slice(-4)}`;
+          await StoresRepository.create({
+            seller_id: createdSeller._id,
+            name: businessName,
+            slug: uniqueStoreSlug,
+            description: `Official storefront for ${businessName}`,
+            logo_url: null,
+            banner_url: null,
+            contact_email: createdUser.email,
+            contact_phone: createdUser.phone || null,
+            address: {
+              line1: "Main Office",
+              city: "Dhaka",
+              state: "Dhaka",
+              postal_code: "1200",
+              country: "Bangladesh",
+            },
+            location: null,
+            rating_avg: 0,
+            rating_count: 0,
+            is_open: false,
+            created_at: now,
+            updated_at: now,
+          });
+          logger.info({ sellerId: createdSeller._id, storeSlug: uniqueStoreSlug }, "Store profile auto-provisioned with status pending");
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to auto-register seller profile");
+      }
+    }
+
+    if (createdUser.role === "DELIVERY_AGENT") {
+      try {
+        const { deliveryService } = await import("../delivery/delivery.service");
+        await deliveryService.registerOrGetAgent(createdUser._id.toString(), {
+          vehicle_type: dto.vehicle_type || "motorcycle",
+          vehicle_number: dto.vehicle_number || "NX-" + Math.floor(1000 + Math.random() * 9000),
+          license_number: dto.license_number || "LIC-" + Math.floor(100000 + Math.random() * 900000),
+          delivery_zones: dto.delivery_zones || (dto.service_city ? [dto.service_city] : ["Dhaka", "Gulshan", "Banani", "Uttara", "Dhanmondi"]),
+          service_city: dto.service_city || "Dhaka",
+          phone: dto.phone || undefined,
+        });
+      } catch (err) {
+        logger.warn({ err }, "Failed to auto-register delivery agent profile");
+      }
+    }
+
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     const verificationUrl = `${frontendUrl}/verify-email?token=${rawVerificationToken}`;
 

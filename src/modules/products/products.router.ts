@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { ProductsController } from "./products.controller";
 import { authenticate } from "../../shared/middleware/authenticate";
 import { authorize } from "../../shared/middleware/authorize";
@@ -91,6 +91,27 @@ router.patch(
   authorize("ADMIN", "SUPER_ADMIN"),
   validate(rejectProductSchema),
   asyncHandler(ProductsController.adminReject)
+);
+
+router.post(
+  "/admin",
+  authenticate,
+  authorize("ADMIN", "SUPER_ADMIN"),
+  asyncHandler(ProductsController.adminCreate)
+);
+
+router.patch(
+  "/admin/:id",
+  authenticate,
+  authorize("ADMIN", "SUPER_ADMIN"),
+  asyncHandler(ProductsController.adminUpdate)
+);
+
+router.delete(
+  "/admin/:id",
+  authenticate,
+  authorize("ADMIN", "SUPER_ADMIN"),
+  asyncHandler(ProductsController.adminDelete)
 );
 
 export const productsRouter = router;

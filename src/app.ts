@@ -5,13 +5,18 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import { requestLogger } from "./shared/middleware/requestLogger";
 import { errorHandler } from "./shared/middleware/errorHandler";
+import { metricsMiddleware, registry } from "./infrastructure/metrics";
 import { apiRouter } from "./routes";
 import { NotFoundError } from "./shared/errors/errors";
+import { ensureConnected } from "./infrastructure/db/client";
 
 dotenv.config();
 
 export function createApp(): Express {
   const app = express();
+
+  // Metrics middleware for HTTP latency and status tracking
+  app.use(metricsMiddleware);
 
   // Security headers
   app.use(helmet());
@@ -33,7 +38,21 @@ export function createApp(): Express {
       },
       credentials: true,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Request-Id",
+        "x-request-id",
+        "X-Guest-Cart-Id",
+        "x-guest-cart-id",
+        "x-session-token",
+        "stripe-signature",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+      ],
+      exposedHeaders: ["set-cookie"],
+      optionsSuccessStatus: 200,
     })
   );
 
@@ -54,6 +73,22 @@ export function createApp(): Express {
 
   // Static uploads directory
   app.use("/uploads", express.static("uploads"));
+
+  // Prometheus direct scraping endpoint
+  app.get("/metrics", async (_req, res) => {
+    res.set("Content-Type", registry.contentType);
+    res.end(await registry.metrics());
+  });
+
+  // Auto-connect to DB if not yet connected
+  app.use("/api/v1", async (_req, _res, next) => {
+    try {
+      await ensureConnected();
+    } catch {
+      // route handlers will catch and report meaningful error via getDb()
+    }
+    next();
+  });
 
   // Master API Router
   app.use("/api/v1", apiRouter);

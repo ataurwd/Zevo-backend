@@ -1,4 +1,7 @@
 ﻿import { ObjectId } from "mongodb";
+import { getDb } from "../../infrastructure/db/client";
+import { logger } from "../../infrastructure/logger";
+import { UserRole } from "../../shared/types/express";
 import { UsersRepository } from "./users.repository";
 import { AddressesRepository } from "./addresses.repository";
 import {
@@ -10,7 +13,7 @@ import {
   AddressDocument,
 } from "./users.types";
 import { UserResponse } from "../auth/auth.types";
-import { NotFoundError, UnauthorizedError } from "../../shared/errors/errors";
+import { NotFoundError, UnauthorizedError, ConflictError } from "../../shared/errors/errors";
 import { hashPassword, comparePassword } from "../../shared/utils/password";
 import { AuditService } from "../../infrastructure/services/audit.service";
 
@@ -178,4 +181,218 @@ export class UsersService {
       throw new NotFoundError("Address not found");
     }
   }
+
+  public static async adminListUsers(options: {
+    role?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{ users: any[]; total: number; page: number; totalPages: number }> {
+    const page = Math.max(1, Number(options.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(options.limit) || 50));
+    const skip = (page - 1) * limit;
+
+    const { users, total } = await UsersRepository.adminListUsers({
+      role: options.role,
+      search: options.search,
+      skip,
+      limit,
+    });
+
+    const db = getDb();
+    const userIds = users.map((u) => u._id);
+
+    // Fetch order counts and delivery agent profiles
+    let orderCountMap = new Map<string, number>();
+    try {
+      const ordersCol = db.collection("orders");
+      const agentsCol = db.collection("delivery_agents");
+
+      const [orderCounts, agents] = await Promise.all([
+        ordersCol
+          .aggregate([
+            { $match: { customer_id: { $in: userIds } } },
+            { $group: { _id: "$customer_id", count: { $sum: 1 } } },
+          ])
+          .toArray(),
+        agentsCol.find({ user_id: { $in: userIds } }).toArray(),
+      ]);
+
+      orderCounts.forEach((oc: any) => {
+        orderCountMap.set(oc._id.toString(), oc.count);
+      });
+
+      const agentMap = new Map(agents.map((a) => [a.user_id.toString(), a]));
+
+      const mappedUsers = users.map((u) => {
+        const uId = u._id.toString();
+        const agent = agentMap.get(uId);
+        const ordersCount = orderCountMap.get(uId) || (agent?.total_deliveries || 0);
+
+        return {
+          id: uId,
+          name: `${u.first_name || ""} ${u.last_name || ""}`.trim() || "User",
+          first_name: u.first_name,
+          last_name: u.last_name,
+          email: u.email,
+          role: (u.role as string) === "DELIVERY_AGENT" ? "RIDER" : u.role,
+          original_role: u.role,
+          phone: u.phone || "",
+          status: u.is_active !== false ? "ACTIVE" : "SUSPENDED",
+          is_active: u.is_active !== false,
+          ordersCount,
+          joined: u.created_at
+            ? new Date(u.created_at).toLocaleDateString("en-US", {
+                month: "short",
+                day: "2-digit",
+                year: "numeric",
+              })
+            : "Recent",
+          created_at: u.created_at ? new Date(u.created_at).toISOString() : new Date().toISOString(),
+          rider_profile: agent
+            ? {
+                vehicle_type: agent.vehicle_type,
+                vehicle_number: agent.vehicle_number,
+                license_number: agent.license_number,
+                service_city: agent.service_city,
+                delivery_zones: agent.delivery_zones,
+                is_online: agent.is_online,
+                rating: agent.rating,
+              }
+            : null,
+        };
+      });
+
+      return {
+        users: mappedUsers,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      };
+    } catch {
+      const mappedUsers = users.map((u) => ({
+        id: u._id.toString(),
+        name: `${u.first_name || ""} ${u.last_name || ""}`.trim() || "User",
+        first_name: u.first_name,
+        last_name: u.last_name,
+        email: u.email,
+        role: (u.role as string) === "DELIVERY_AGENT" ? "RIDER" : u.role,
+        original_role: u.role,
+        phone: u.phone || "",
+        status: u.is_active !== false ? "ACTIVE" : "SUSPENDED",
+        is_active: u.is_active !== false,
+        ordersCount: 0,
+        joined: u.created_at
+          ? new Date(u.created_at).toLocaleDateString("en-US", {
+              month: "short",
+              day: "2-digit",
+              year: "numeric",
+            })
+          : "Recent",
+        created_at: u.created_at ? new Date(u.created_at).toISOString() : new Date().toISOString(),
+        rider_profile: null,
+      }));
+      return {
+        users: mappedUsers,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      };
+    }
+  }
+
+  public static async adminCreateUser(data: {
+    first_name: string;
+    last_name: string;
+    email: string;
+    role: string;
+    phone?: string;
+    password?: string;
+    service_city?: string;
+    delivery_zones?: string[];
+  }): Promise<any> {
+    const existing = await UsersRepository.findByEmail(data.email);
+    if (existing) {
+      throw new ConflictError("A user with this email address already exists");
+    }
+
+    const defaultPassword = data.password || "Nexora@2026!";
+    const passwordHash = await hashPassword(defaultPassword);
+
+    let assignedRole: UserRole = "CUSTOMER";
+    const r = data.role.toUpperCase();
+    if (r === "RIDER" || r === "DELIVERY_AGENT") assignedRole = "DELIVERY_AGENT";
+    else if (r === "SELLER") assignedRole = "SELLER";
+    else if (r === "ADMIN") assignedRole = "ADMIN";
+    else if (r === "SUPER_ADMIN") assignedRole = "SUPER_ADMIN";
+
+    const now = new Date();
+    const newUser = await UsersRepository.create({
+      first_name: data.first_name,
+      last_name: data.last_name,
+      email: data.email.toLowerCase().trim(),
+      password_hash: passwordHash,
+      role: assignedRole,
+      phone: data.phone || null,
+      avatar_url: null,
+      is_email_verified: true,
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    });
+
+    if (assignedRole === "DELIVERY_AGENT") {
+      try {
+        const { deliveryService } = await import("../delivery/delivery.service");
+        await deliveryService.registerOrGetAgent(newUser._id.toString(), {
+          vehicle_type: "motorcycle",
+          vehicle_number: "NX-" + Math.floor(1000 + Math.random() * 9000),
+          license_number: "LIC-" + Math.floor(100000 + Math.random() * 900000),
+          service_city: data.service_city || "Dhaka",
+          delivery_zones: data.delivery_zones || ["Dhaka", "Gulshan", "Banani", "Uttara", "Dhanmondi"],
+          phone: data.phone,
+        });
+      } catch (err) {
+        logger.warn({ err }, "Could not create delivery agent profile for admin-created user");
+      }
+    }
+
+    return UsersRepository.toResponse(newUser);
+  }
+
+  public static async adminUpdateUser(
+    userId: string,
+    data: { role?: string; is_active?: boolean; phone?: string; first_name?: string; last_name?: string }
+  ): Promise<any> {
+    let roleToUpdate: UserRole | undefined;
+    if (data.role) {
+      const r = data.role.toUpperCase();
+      if (r === "RIDER" || r === "DELIVERY_AGENT") roleToUpdate = "DELIVERY_AGENT";
+      else if (r === "SELLER") roleToUpdate = "SELLER";
+      else if (r === "ADMIN") roleToUpdate = "ADMIN";
+      else if (r === "CUSTOMER") roleToUpdate = "CUSTOMER";
+    }
+
+    const updated = await UsersRepository.adminUpdateUser(userId, {
+      role: roleToUpdate,
+      is_active: data.is_active,
+      phone: data.phone,
+      first_name: data.first_name,
+      last_name: data.last_name,
+    });
+
+    if (!updated) {
+      throw new NotFoundError("User not found");
+    }
+
+    if (roleToUpdate === "DELIVERY_AGENT") {
+      try {
+        const { deliveryService } = await import("../delivery/delivery.service");
+        await deliveryService.registerOrGetAgent(userId);
+      } catch {}
+    }
+
+    return UsersRepository.toResponse(updated);
+  }
+
 }

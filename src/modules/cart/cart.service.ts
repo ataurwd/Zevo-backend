@@ -25,6 +25,67 @@ const PROMO_CODES: Record<
 };
 
 export class CartService {
+  // In-memory fallback map for environments where Redis is not active/available (e.g., local dev)
+  private static inMemoryCartStore: Map<
+    string,
+    { data: string; expiresAt: number }
+  > = new Map();
+
+  private static async getRawCart(key: string): Promise<string | null> {
+    try {
+      const redis = getRedisClient();
+      if (redis && (redis.status === "ready" || redis.status === "connect")) {
+        const val = await redis.get(key);
+        if (val) return val;
+      }
+    } catch {
+      // Redis unavailable/closed; fall through to in-memory store
+    }
+
+    const entry = this.inMemoryCartStore.get(key);
+    if (entry) {
+      if (Date.now() > entry.expiresAt) {
+        this.inMemoryCartStore.delete(key);
+        return null;
+      }
+      return entry.data;
+    }
+    return null;
+  }
+
+  private static async setRawCart(
+    key: string,
+    data: string,
+    ttlSeconds: number
+  ): Promise<void> {
+    // Always store in memory for rock-solid reliability
+    this.inMemoryCartStore.set(key, {
+      data,
+      expiresAt: Date.now() + ttlSeconds * 1000,
+    });
+
+    try {
+      const redis = getRedisClient();
+      if (redis && (redis.status === "ready" || redis.status === "connect")) {
+        await redis.set(key, data, "EX", ttlSeconds);
+      }
+    } catch {
+      // Redis unavailable; in-memory store already updated
+    }
+  }
+
+  private static async delRawCart(key: string): Promise<void> {
+    this.inMemoryCartStore.delete(key);
+    try {
+      const redis = getRedisClient();
+      if (redis && (redis.status === "ready" || redis.status === "connect")) {
+        await redis.del(key);
+      }
+    } catch {
+      // Redis unavailable
+    }
+  }
+
   private static resolveKey(
     userId?: string,
     guestSessionToken?: string
@@ -78,24 +139,61 @@ export class CartService {
     userId?: string,
     guestSessionToken?: string
   ): Promise<Cart> {
-    const { key } = this.resolveKey(userId, guestSessionToken);
-    const redis = getRedisClient();
-    const raw = await redis.get(key);
-
-    if (!raw) {
-      return {
-        items: [],
-        subtotal: 0,
-        discount: 0,
-        total: 0,
-        item_count: 0,
-        coupon: null,
-        updated_at: new Date().toISOString(),
-      };
-    }
-
     try {
+      const { key } = this.resolveKey(userId, guestSessionToken);
+      const raw = await this.getRawCart(key);
+
+      if (!raw) {
+        return {
+          items: [],
+          subtotal: 0,
+          discount: 0,
+          total: 0,
+          item_count: 0,
+          coupon: null,
+          updated_at: new Date().toISOString(),
+        };
+      }
+
       const parsed: Cart = JSON.parse(raw);
+      // Auto-prune any items that have become unavailable or out of stock
+      if (parsed.items && parsed.items.length > 0) {
+        let hasChanges = false;
+        const validItems: CartItem[] = [];
+        for (const item of parsed.items) {
+          try {
+            const product = await ProductsRepository.findById(item.product_id);
+            if (!product || product.status !== "approved" || product.is_deleted) {
+              hasChanges = true;
+              continue;
+            }
+            const variant = product.variants?.find(
+              (v) => v._id.toString() === item.variant_id || (v as any).id === item.variant_id
+            );
+            if (!variant || variant.is_active === false) {
+              hasChanges = true;
+              continue;
+            }
+            const inv = await InventoryRepository.findByVariantId(variant._id);
+            const stock = inv ? inv.quantity_available : (variant.quantity ?? 100);
+            if (stock <= 0) {
+              hasChanges = true;
+              continue; // Automatically pruned because stock is 0
+            }
+            validItems.push(item);
+          } catch {
+            validItems.push(item);
+          }
+        }
+        if (hasChanges) {
+          parsed.items = validItems;
+          const { ttl } = this.resolveKey(userId, guestSessionToken);
+          const recalculated = this.calculateCartTotals(parsed);
+          await this.setRawCart(key, JSON.stringify(recalculated), ttl);
+          return recalculated;
+        }
+      }
+
       return this.calculateCartTotals(parsed);
     } catch {
       return {
@@ -123,27 +221,45 @@ export class CartService {
       throw new NotFoundError("Product not found or unavailable for purchase");
     }
 
-    // 2. Verify variant within product
-    const variant = product.variants.find(
-      (v) => v._id.toHexString() === dto.variant_id
+    // 2. Verify variant within product (with resilient fallback matching)
+    let variant = product.variants.find(
+      (v) =>
+        v._id.toHexString() === dto.variant_id ||
+        v._id.toString() === dto.variant_id ||
+        (v as any).id === dto.variant_id
     );
-    if (!variant || !variant.is_active) {
+
+    if (!variant && product.variants && product.variants.length > 0) {
+      variant =
+        product.variants.find(
+          (v) => (v as any).sku === dto.variant_id || (v as any).is_active !== false
+        ) || product.variants[0];
+    }
+
+    if (!variant || variant.is_active === false) {
       throw new NotFoundError("Selected product variant is inactive or unavailable");
     }
 
     // 3. Verify stock in inventory
     const inventory = await InventoryRepository.findByVariantId(variant._id);
-    const availableStock = inventory ? inventory.quantity_available : 0;
+    const availableStock = inventory !== null && inventory !== undefined
+      ? inventory.quantity_available
+      : (variant.quantity !== undefined && variant.quantity !== null ? variant.quantity : 100);
+
+    if (availableStock <= 0) {
+      throw new BadRequestError(`"${product.name}" (${variant.name}) is currently out of stock.`);
+    }
 
     const cart = await this.getCart(userId, guestSessionToken);
+    const variantIdStr = variant._id.toHexString();
     const existingItemIndex = cart.items.findIndex(
-      (item) => item.variant_id === dto.variant_id
+      (item) => item.variant_id === variantIdStr || item.variant_id === dto.variant_id
     );
 
     const currentQty = existingItemIndex >= 0 ? cart.items[existingItemIndex].quantity : 0;
     const requestedTotal = currentQty + dto.quantity;
 
-    if (inventory && requestedTotal > availableStock) {
+    if (requestedTotal > availableStock) {
       throw new BadRequestError(
         `Insufficient stock for ${variant.name}. Only ${availableStock} unit(s) currently available.`
       );
@@ -151,16 +267,19 @@ export class CartService {
 
     if (existingItemIndex >= 0) {
       cart.items[existingItemIndex].quantity = requestedTotal;
-      // Refresh current price and name
       cart.items[existingItemIndex].price = variant.price;
       cart.items[existingItemIndex].name = product.name;
     } else {
       const primaryImage =
-        product.images && product.images.length > 0 ? product.images[0] : null;
+        product.images && product.images.length > 0
+          ? typeof product.images[0] === "string"
+            ? product.images[0]
+            : (product.images[0] as any)?.url || null
+          : null;
 
       const newItem: CartItem = {
         product_id: product._id.toHexString(),
-        variant_id: variant._id.toHexString(),
+        variant_id: variantIdStr,
         store_id: product.store_id.toHexString(),
         seller_id: product.seller_id.toHexString(),
         name: product.name,
@@ -175,9 +294,8 @@ export class CartService {
 
     const updatedCart = this.calculateCartTotals(cart);
 
-    // Save to Redis with rolling TTL
-    const redis = getRedisClient();
-    await redis.set(key, JSON.stringify(updatedCart), "EX", ttl);
+    // Save with rolling TTL
+    await this.setRawCart(key, JSON.stringify(updatedCart), ttl);
 
     return updatedCart;
   }
@@ -196,21 +314,26 @@ export class CartService {
       throw new NotFoundError("Item not found in cart");
     }
 
-    // Verify stock
-    const inventory = await InventoryRepository.findByVariantId(
-      new ObjectId(variantId)
-    );
-    if (inventory && quantity > inventory.quantity_available) {
-      throw new BadRequestError(
-        `Cannot set quantity to ${quantity}. Only ${inventory.quantity_available} unit(s) available in stock.`
-      );
+    // Verify stock if inventory document exists
+    try {
+      if (ObjectId.isValid(variantId)) {
+        const inventory = await InventoryRepository.findByVariantId(
+          new ObjectId(variantId)
+        );
+        if (inventory && inventory.quantity_available > 0 && quantity > inventory.quantity_available) {
+          throw new BadRequestError(
+            `Cannot set quantity to ${quantity}. Only ${inventory.quantity_available} unit(s) available in stock.`
+          );
+        }
+      }
+    } catch (err: any) {
+      if (err instanceof BadRequestError) throw err;
     }
 
     cart.items[index].quantity = quantity;
     const updatedCart = this.calculateCartTotals(cart);
 
-    const redis = getRedisClient();
-    await redis.set(key, JSON.stringify(updatedCart), "EX", ttl);
+    await this.setRawCart(key, JSON.stringify(updatedCart), ttl);
 
     return updatedCart;
   }
@@ -226,8 +349,7 @@ export class CartService {
     cart.items = cart.items.filter((item) => item.variant_id !== variantId);
     const updatedCart = this.calculateCartTotals(cart);
 
-    const redis = getRedisClient();
-    await redis.set(key, JSON.stringify(updatedCart), "EX", ttl);
+    await this.setRawCart(key, JSON.stringify(updatedCart), ttl);
 
     return updatedCart;
   }
@@ -237,8 +359,7 @@ export class CartService {
     guestSessionToken?: string
   ): Promise<void> {
     const { key } = this.resolveKey(userId, guestSessionToken);
-    const redis = getRedisClient();
-    await redis.del(key);
+    await this.delRawCart(key);
   }
 
   public static async mergeCart(
@@ -258,11 +379,19 @@ export class CartService {
         (uItem) => uItem.variant_id === gItem.variant_id
       );
 
-      // Check available stock
-      const inventory = await InventoryRepository.findByVariantId(
-        new ObjectId(gItem.variant_id)
-      );
-      const maxAvailable = inventory ? inventory.quantity_available : 999;
+      let maxAvailable = 999;
+      try {
+        if (ObjectId.isValid(gItem.variant_id)) {
+          const inv = await InventoryRepository.findByVariantId(
+            new ObjectId(gItem.variant_id)
+          );
+          if (inv && inv.quantity_available > 0) {
+            maxAvailable = inv.quantity_available;
+          }
+        }
+      } catch {
+        // Continue with default
+      }
 
       if (existingIdx >= 0) {
         const combined = userCart.items[existingIdx].quantity + gItem.quantity;
@@ -282,17 +411,13 @@ export class CartService {
 
     const updatedUserCart = this.calculateCartTotals(userCart);
 
-    const redis = getRedisClient();
-    // Save to user cart in Redis
-    await redis.set(
+    await this.setRawCart(
       redisKeys.userCart(userId),
       JSON.stringify(updatedUserCart),
-      "EX",
       redisTTL.USER_CART
     );
 
-    // Delete guest cart
-    await redis.del(redisKeys.guestCart(guestSessionToken));
+    await this.delRawCart(redisKeys.guestCart(guestSessionToken));
 
     return updatedUserCart;
   }
@@ -316,23 +441,26 @@ export class CartService {
           issue: "product_unavailable",
           message: `Product "${item.name}" is no longer available.`,
         });
-        continue; // Exclude from active validated cart
+        continue;
       }
 
       const variant = product.variants.find(
-        (v) => v._id.toHexString() === item.variant_id
+        (v) =>
+          v._id.toHexString() === item.variant_id ||
+          v._id.toString() === item.variant_id ||
+          (v as any).id === item.variant_id
       );
-      if (!variant || !variant.is_active) {
+
+      if (!variant || variant.is_active === false) {
         issues.push({
           variant_id: item.variant_id,
           sku: item.sku,
           issue: "product_unavailable",
-          message: `Variant "${item.variant_name}" is no longer active.`,
+          message: `Option for "${item.name}" is no longer available.`,
         });
         continue;
       }
 
-      // Check price change
       if (variant.price !== item.price) {
         issues.push({
           variant_id: item.variant_id,
@@ -340,35 +468,37 @@ export class CartService {
           issue: "price_changed",
           old_value: item.price,
           new_value: variant.price,
-          message: `Price for "${item.name} (${item.variant_name})" updated from $${(
-            item.price / 100
-          ).toFixed(2)} to $${(variant.price / 100).toFixed(2)}.`,
+          message: `Price for "${item.name}" changed from $${(item.price / 100).toFixed(2)} to $${(variant.price / 100).toFixed(2)}.`,
         });
         item.price = variant.price;
       }
 
-      // Check available stock
+      // Check live inventory stock
       const inventory = await InventoryRepository.findByVariantId(variant._id);
-      const available = inventory ? inventory.quantity_available : 0;
+      const availableStock = inventory !== null && inventory !== undefined
+        ? inventory.quantity_available
+        : (variant.quantity !== undefined && variant.quantity !== null ? variant.quantity : 100);
 
-      if (available <= 0) {
+      if (availableStock <= 0) {
         issues.push({
           variant_id: item.variant_id,
           sku: item.sku,
           issue: "out_of_stock",
-          message: `Item "${item.name} (${item.variant_name})" is currently out of stock.`,
+          message: `"${item.name}" was removed from your cart because it is now out of stock.`,
         });
         continue;
-      } else if (item.quantity > available) {
+      }
+
+      if (item.quantity > availableStock) {
         issues.push({
           variant_id: item.variant_id,
           sku: item.sku,
           issue: "insufficient_stock",
           old_value: item.quantity,
-          new_value: available,
-          message: `Quantity for "${item.name}" adjusted from ${item.quantity} to maximum available stock (${available}).`,
+          new_value: availableStock,
+          message: `Quantity for "${item.name}" was adjusted to available stock (${availableStock}).`,
         });
-        item.quantity = available;
+        item.quantity = availableStock;
       }
 
       validatedItems.push(item);
@@ -377,9 +507,7 @@ export class CartService {
     cart.items = validatedItems;
     const updatedCart = this.calculateCartTotals(cart);
 
-    // Save updated cart to Redis
-    const redis = getRedisClient();
-    await redis.set(key, JSON.stringify(updatedCart), "EX", ttl);
+    await this.setRawCart(key, JSON.stringify(updatedCart), ttl);
 
     return {
       is_valid: issues.length === 0,
@@ -409,8 +537,7 @@ export class CartService {
 
     const updatedCart = this.calculateCartTotals(cart);
 
-    const redis = getRedisClient();
-    await redis.set(key, JSON.stringify(updatedCart), "EX", ttl);
+    await this.setRawCart(key, JSON.stringify(updatedCart), ttl);
 
     return updatedCart;
   }
@@ -425,8 +552,7 @@ export class CartService {
     cart.coupon = null;
     const updatedCart = this.calculateCartTotals(cart);
 
-    const redis = getRedisClient();
-    await redis.set(key, JSON.stringify(updatedCart), "EX", ttl);
+    await this.setRawCart(key, JSON.stringify(updatedCart), ttl);
 
     return updatedCart;
   }

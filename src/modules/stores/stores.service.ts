@@ -1,5 +1,6 @@
 ﻿import { ObjectId } from "mongodb";
 import { StoresRepository } from "./stores.repository";
+import { getDb } from "../../infrastructure/db/client";
 import { SellersRepository } from "../sellers/sellers.repository";
 import {
   CreateStoreDTO,
@@ -202,5 +203,46 @@ export class StoresService {
       items: items.map(StoresRepository.toResponse),
       total,
     };
+  }
+
+  public static async adminListStores(): Promise<any[]> {
+    const stores = await StoresRepository.listAll();
+    const sellersCol = getDb().collection("sellers");
+    const usersCol = getDb().collection("users");
+    const productsCol = getDb().collection("products");
+
+    const result = [];
+    for (const store of stores) {
+      const seller = await sellersCol.findOne({ _id: store.seller_id });
+      let user = null;
+      if (seller?.user_id) {
+        user = await usersCol.findOne({ _id: seller.user_id });
+      }
+      const productsCount = await productsCol.countDocuments({
+        $or: [{ store_id: store._id }, { seller_id: store.seller_id }],
+      });
+
+      result.push({
+        id: store._id.toString(),
+        name: store.name,
+        slug: store.slug,
+        description: store.description || null,
+        seller_id: store.seller_id.toString(),
+        seller: user ? `${user.first_name} ${user.last_name}` : (seller?.business_name || "Merchant"),
+        seller_email: user?.email || null,
+        seller_phone: user?.phone || null,
+        status: (seller?.status || "pending").toUpperCase(),
+        is_open: store.is_open ?? true,
+        productsCount,
+        ordersTotal: `$${(((seller?.total_earnings || 0) / 100)).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+        rating: store.rating_avg || 0,
+        rating_count: store.rating_count || 0,
+        address: store.address || null,
+        joined: store.created_at ? new Date(store.created_at).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "Recent",
+        created_at: store.created_at ? new Date(store.created_at).toISOString() : new Date().toISOString(),
+      });
+    }
+
+    return result;
   }
 }

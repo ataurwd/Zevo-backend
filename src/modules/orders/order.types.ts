@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 
-export type OrderStatus = "pending" | "confirmed" | "cancelled" | "completed";
+export type OrderStatus = "pending" | "confirmed" | "preparing" | "ready_for_pickup" | "picked_up" | "in_transit" | "cancelled" | "completed";
 
 export type SubOrderStatus =
   | "pending"
@@ -8,6 +8,7 @@ export type SubOrderStatus =
   | "preparing"
   | "ready_for_pickup"
   | "picked_up"
+  | "in_transit"
   | "delivered"
   | "cancelled";
 
@@ -62,6 +63,13 @@ export interface OrderDocument {
   cancelled_at?: Date | null;
   cancelled_by?: ObjectId | null;
   cancellation_reason?: string | null;
+  assigned_rider?: any;
+  confirmed_at?: Date | null;
+  preparing_at?: Date | null;
+  ready_at?: Date | null;
+  picked_up_at?: Date | null;
+  in_transit_at?: Date | null;
+  delivered_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -72,6 +80,9 @@ export interface SubOrderDocument {
   order_number: string;
   seller_id: ObjectId;
   store_id: ObjectId;
+  customer_id?: ObjectId;
+  delivery_address?: DeliveryAddressSnapshot;
+  customer_notes?: string | null;
   status: SubOrderStatus;
   items: OrderItemSnapshot[];
   subtotal: number;
@@ -83,7 +94,12 @@ export interface SubOrderDocument {
   confirmed_at?: Date | null;
   preparing_at?: Date | null;
   ready_at?: Date | null;
+  picked_up_at?: Date | null;
   delivered_at?: Date | null;
+  in_transit_at?: Date | null;
+  assigned_rider?: any;
+  cancelled_at?: Date | null;
+  cancellation_reason?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -95,7 +111,8 @@ export interface CreateOrderDTO {
 }
 
 export interface UpdateSubOrderStatusDTO {
-  status: "confirmed" | "preparing" | "ready_for_pickup";
+  status: "confirmed" | "preparing" | "ready_for_pickup" | "picked_up" | "delivered" | "cancelled";
+  reason?: string;
 }
 
 export interface CancelOrderDTO {
@@ -103,6 +120,13 @@ export interface CancelOrderDTO {
 }
 
 export interface OrderResponse {
+  assigned_rider?: any;
+  confirmed_at?: string | null;
+  preparing_at?: string | null;
+  ready_at?: string | null;
+  picked_up_at?: string | null;
+  in_transit_at?: string | null;
+  delivered_at?: string | null;
   id: string;
   order_number: string;
   customer_id: string;
@@ -132,6 +156,9 @@ export interface SubOrderResponse {
   seller_id: string;
   store_id: string;
   store_name?: string;
+  customer_id?: string;
+  delivery_address?: DeliveryAddressSnapshot;
+  customer_notes?: string | null;
   status: SubOrderStatus;
   items: Array<{
     product_id: string;
@@ -153,7 +180,12 @@ export interface SubOrderResponse {
   confirmed_at?: string | null;
   preparing_at?: string | null;
   ready_at?: string | null;
+  picked_up_at?: string | null;
   delivered_at?: string | null;
+  in_transit_at?: string | null;
+  assigned_rider?: any;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
   created_at: string;
   updated_at: string;
 }
