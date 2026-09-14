@@ -22,39 +22,62 @@ export function createApp(): Express {
   app.use(helmet());
 
   // CORS configuration
-  const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
+  const rawAllowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
     .split(",")
-    .map((origin) => origin.trim());
+    .map((origin) => origin.trim().replace(/\/$/, ""));
 
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps, curl, postman)
-        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
-          callback(null, true);
-        } else {
-          callback(new Error(`Origin ${origin} not allowed by CORS`));
-        }
-      },
-      credentials: true,
-      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: [
-        "Content-Type",
-        "Authorization",
-        "X-Request-Id",
-        "x-request-id",
-        "X-Guest-Cart-Id",
-        "x-guest-cart-id",
-        "x-session-token",
-        "stripe-signature",
-        "Accept",
-        "Origin",
-        "X-Requested-With",
-      ],
-      exposedHeaders: ["set-cookie"],
-      optionsSuccessStatus: 200,
-    })
-  );
+  const isOriginAllowed = (origin?: string): boolean => {
+    if (!origin) return true; // mobile apps, server-to-server, curl
+    // Explicit production & development allowed origins
+    const defaultAllowed = [
+      "https://zevo-frontend.vercel.app",
+      "https://zevo-full-stack.onrender.com",
+      "https://zevo-backend.onrender.com",
+      "http://localhost:3000",
+      "http://localhost:5000",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:5000",
+    ];
+    if (defaultAllowed.includes(origin)) return true;
+    if (rawAllowedOrigins.includes("*") || rawAllowedOrigins.includes(origin)) return true;
+    // Allow any localhost/127.0.0.1 port for local development
+    if (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return true;
+    // Automatically allow all Vercel deployments (*.vercel.app)
+    if (/^https:\/\/([a-zA-Z0-9_-]+\.)*vercel\.app$/.test(origin)) return true;
+    // Automatically allow Render deployments (*.onrender.com)
+    if (/^https:\/\/([a-zA-Z0-9_-]+\.)*onrender\.com$/.test(origin)) return true;
+    return false;
+  };
+
+  const corsOptions: cors.CorsOptions = {
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Request-Id",
+      "x-request-id",
+      "X-Guest-Cart-Id",
+      "x-guest-cart-id",
+      "x-session-token",
+      "stripe-signature",
+      "Accept",
+      "Origin",
+      "X-Requested-With",
+    ],
+    exposedHeaders: ["set-cookie"],
+    optionsSuccessStatus: 200,
+  };
+
+  app.use(cors(corsOptions));
+  app.options("*", cors(corsOptions));
 
   // Cookie and Body Parsers
   app.use(cookieParser());
