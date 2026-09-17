@@ -6,6 +6,7 @@ import {
   RevenueTimePoint,
   TopProductMetric,
   TopStoreMetric,
+  AdminBadgeCounts,
 } from "./analytics.types";
 
 export class AnalyticsService {
@@ -246,6 +247,76 @@ export class AnalyticsService {
       active_riders_online: activeRiders,
       revenue_chart,
       top_stores: topStoresRes,
+    };
+  }
+
+  async getAdminBadgeCounts(): Promise<AdminBadgeCounts> {
+    const db = getDb();
+    const usersCollection = db.collection("users");
+    const sellersCollection = db.collection("sellers");
+    const inventoryCollection = db.collection("inventory");
+    const ordersCollection = db.collection("orders");
+    const withdrawalsCollection = db.collection("withdrawals");
+    const storesCollection = db.collection("stores");
+    const productsCollection = db.collection("products");
+
+    const [
+      usersCount,
+      pendingSellers,
+      totalSellers,
+      lowStockCount,
+      totalInventory,
+      totalOrders,
+      pendingOrders,
+      pendingWithdrawals,
+      totalWithdrawals,
+      totalStores,
+      totalProducts,
+      pendingProducts,
+    ] = await Promise.all([
+      usersCollection.countDocuments({}),
+      sellersCollection.countDocuments({ status: "pending" }),
+      sellersCollection.countDocuments({}),
+      inventoryCollection.countDocuments({
+        $expr: { $lte: ["$quantity_available", "$low_stock_threshold"] },
+      }),
+      inventoryCollection.countDocuments({}),
+      ordersCollection.countDocuments({}),
+      ordersCollection.countDocuments({
+        status: { $in: ["pending", "confirmed", "preparing"] },
+      }),
+      withdrawalsCollection.countDocuments({ status: "pending" }),
+      withdrawalsCollection.countDocuments({}),
+      storesCollection.countDocuments({}),
+      productsCollection.countDocuments({}),
+      productsCollection.countDocuments({ status: "pending_review" }),
+    ]);
+
+    return {
+      users: usersCount,
+      merchants: {
+        pending: pendingSellers,
+        total: totalSellers,
+      },
+      inventory: {
+        low_stock: lowStockCount,
+        total: totalInventory,
+      },
+      orders: {
+        total: totalOrders,
+        pending: pendingOrders,
+      },
+      withdrawals: {
+        pending: pendingWithdrawals,
+        total: totalWithdrawals,
+      },
+      stores: {
+        total: totalStores,
+      },
+      products: {
+        total: totalProducts,
+        pending_review: pendingProducts,
+      },
     };
   }
 }

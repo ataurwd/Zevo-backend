@@ -127,4 +127,47 @@ describe("Phase 14: Analytics API Endpoints", () => {
       expect(res.status).toBe(403);
     });
   });
+
+  describe("GET /api/v1/analytics/admin/badges", () => {
+    it("should return live badge counts for admin user", async () => {
+      const mockBadges = {
+        users: 20,
+        merchants: { pending: 2, total: 7 },
+        inventory: { low_stock: 2, total: 27 },
+        orders: { total: 4, pending: 0 },
+        withdrawals: { pending: 1, total: 1 },
+        stores: { total: 8 },
+        products: { total: 27, pending_review: 0 },
+      };
+
+      vi.spyOn(analyticsService, "getAdminBadgeCounts").mockResolvedValue(mockBadges);
+
+      const res = await request(app)
+        .get("/api/v1/analytics/admin/badges")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.users).toBe(20);
+      expect(res.body.data.merchants.pending).toBe(2);
+      expect(res.body.data.inventory.low_stock).toBe(2);
+      expect(res.body.data.orders.total).toBe(4);
+      expect(res.body.data.withdrawals.pending).toBe(1);
+    });
+
+    it("should deny access to regular customer", async () => {
+      const customerToken = generateAccessToken({
+        id: "cust-1",
+        email: "customer@nexora.com",
+        role: "CUSTOMER",
+      }).token;
+
+      const res = await request(app)
+        .get("/api/v1/analytics/admin/badges")
+        .set("Authorization", `Bearer ${customerToken}`);
+
+      expect(res.status).toBe(403);
+    });
+  });
 });
+

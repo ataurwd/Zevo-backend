@@ -39,3 +39,31 @@ export interface AdminAnalytics {
   revenue_chart: RevenueTimePoint[];
   top_stores: TopStoreMetric[];
 }
+
+export interface AdminBadgeCounts {
+  users: number;
+  merchants: {
+    pending: number;
+    total: number;
+  };
+  inventory: {
+    low_stock: number;
+    total: number;
+  };
+  orders: {
+    total: number;
+    pending: number;
+  };
+  withdrawals: {
+    pending: number;
+    total: number;
+  };
+  stores: {
+    total: number;
+  };
+  products: {
+    total: number;
+    pending_review: number;
+  };
+}
+

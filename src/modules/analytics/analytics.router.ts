@@ -13,4 +13,8 @@ router.get("/seller", authorize("SELLER", "ADMIN", "SUPER_ADMIN"), analyticsCont
 // Admin analytics (admin, super_admin)
 router.get("/admin", authorize("ADMIN", "SUPER_ADMIN"), analyticsController.getAdminAnalytics);
 
+// Admin badge counts (admin, super_admin, support)
+router.get("/admin/badges", authorize("ADMIN", "SUPER_ADMIN", "SUPPORT"), analyticsController.getAdminBadges);
+router.get("/badges", authorize("ADMIN", "SUPER_ADMIN", "SUPPORT"), analyticsController.getAdminBadges);
+
 export const analyticsRouter = router;

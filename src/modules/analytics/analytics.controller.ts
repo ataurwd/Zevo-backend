@@ -43,6 +43,19 @@ export class AnalyticsController {
       next(error);
     }
   };
+
+  getAdminBadges = async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const badges = await this.service.getAdminBadgeCounts();
+
+      return res.status(200).json({
+        success: true,
+        data: badges,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const analyticsController = new AnalyticsController();
