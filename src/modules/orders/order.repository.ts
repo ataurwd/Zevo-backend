@@ -254,15 +254,29 @@ export class OrderRepository {
     const primarySub = subOrders?.[0];
     let effectiveStatus: any = doc.status;
 
-    // Harmonize overall status with sub-orders if parent order hasn't transitioned yet
-    if (effectiveStatus === "pending" || effectiveStatus === "confirmed") {
-      if (primarySub?.status && primarySub.status !== "pending") {
-        if (primarySub.status === "delivered") effectiveStatus = "completed";
-        else effectiveStatus = primarySub.status;
+    const hasSubOrders = !!(subOrders && subOrders.length > 0);
+    const allDelivered = hasSubOrders && subOrders!.every((s) => s.status === "delivered");
+    const anyInTransit = hasSubOrders && subOrders!.some((s) => s.status === "in_transit" || s.status === "picked_up");
+    const anyDelivered = hasSubOrders && subOrders!.some((s) => s.status === "delivered");
+
+    // Harmonize overall status with sub-orders
+    if (allDelivered) {
+      effectiveStatus = "completed";
+    } else if (effectiveStatus === "pending" || effectiveStatus === "confirmed") {
+      if (anyInTransit || anyDelivered) {
+        effectiveStatus = "in_transit";
+      } else if (primarySub?.status && primarySub.status !== "pending") {
+        effectiveStatus = primarySub.status;
       }
     }
 
     const assignedRider = (doc as any).assigned_rider || (primarySub as any)?.assigned_rider || null;
+
+    // Only expose delivered_at on parent order if the parent order as a whole is completed/delivered
+    const isCompleted = effectiveStatus === "completed" || effectiveStatus === "delivered" || allDelivered;
+    const parentDeliveredAt = isCompleted
+      ? (doc as any).delivered_at?.toISOString() || (hasSubOrders && subOrders!.every((s) => s.delivered_at) ? subOrders![subOrders!.length - 1].delivered_at?.toISOString() : null) || null
+      : null;
 
     return {
       id: doc._id.toString(),
@@ -288,7 +302,7 @@ export class OrderRepository {
       ready_at: (doc as any).ready_at?.toISOString() || primarySub?.ready_at?.toISOString() || null,
       picked_up_at: (doc as any).picked_up_at?.toISOString() || primarySub?.picked_up_at?.toISOString() || null,
       in_transit_at: (doc as any).in_transit_at?.toISOString() || (primarySub as any)?.in_transit_at?.toISOString() || null,
-      delivered_at: (doc as any).delivered_at?.toISOString() || primarySub?.delivered_at?.toISOString() || null,
+      delivered_at: parentDeliveredAt,
       created_at: doc.created_at.toISOString(),
       updated_at: doc.updated_at.toISOString(),
       sub_orders: subOrders ? subOrders.map(this.toSubOrderResponse) : undefined,

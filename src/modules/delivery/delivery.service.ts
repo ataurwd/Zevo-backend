@@ -224,8 +224,8 @@ export class DeliveryService {
     task.status = "picked_up";
     task.actual_pickup = now;
 
-    // Update sub_order status to "picked_up" with timestamp
-    await OrderRepository.updateSubOrderStatus(task.sub_order_id, "picked_up" as any, {
+    // Update ALL sub_orders of this order to "picked_up" with timestamp
+    await OrderRepository.updateSubOrdersByOrderId(task.order_id, "picked_up" as any, {
       picked_up_at: now,
       updated_at: now,
     });
@@ -253,8 +253,8 @@ export class DeliveryService {
     await this.repo.updateTaskStatus(taskId, "en_route_delivery");
     task.status = "en_route_delivery";
 
-    // Update sub_order status to in_transit
-    await OrderRepository.updateSubOrderStatus(task.sub_order_id, "in_transit" as any, {
+    // Update ALL sub_orders of this order to in_transit
+    await OrderRepository.updateSubOrdersByOrderId(task.order_id, "in_transit" as any, {
       in_transit_at: now,
       updated_at: now,
     });
@@ -286,23 +286,17 @@ export class DeliveryService {
     // Credit earnings to rider
     await this.repo.creditEarnings(agent._id!, task.rider_earnings || 550);
 
-    // Update sub_order to delivered with delivered_at
-    await OrderRepository.updateSubOrderStatus(task.sub_order_id, "delivered" as any, {
+    // Update ALL sub_orders of this order to delivered with delivered_at
+    await OrderRepository.updateSubOrdersByOrderId(task.order_id, "delivered" as any, {
       delivered_at: now,
       updated_at: now,
     });
 
-    // Check if all sub_orders in parent order are delivered
-    const subOrders = await OrderRepository.findSubOrdersByOrderId(task.order_id);
-    const allDone = subOrders.every(
-      (s) => s.status === ("delivered" as any) || s._id.toString() === task.sub_order_id.toString()
-    );
-    if (allDone) {
-      await OrderRepository.updateOrderStatus(task.order_id, "completed", {
-        delivered_at: now,
-        updated_at: now,
-      });
-    }
+    // Update parent order to completed with delivered_at
+    await OrderRepository.updateOrderStatus(task.order_id, "completed", {
+      delivered_at: now,
+      updated_at: now,
+    });
 
     // Broadcast completion & create notifications
     this.emitDeliveryStatus(task, "delivery:delivered", {
@@ -584,14 +578,27 @@ export class DeliveryService {
       : subOrder.status;
 
     const nowTimestamp = new Date();
-    await getDb().collection("sub_orders").updateOne(
-      { _id: subOrder._id },
+    // Assign rider to ALL sub-orders under this parent order
+    await getDb().collection("sub_orders").updateMany(
+      { order_id: subOrder.order_id },
       {
         $set: {
           delivery_agent_id: agent._id,
           assigned_rider: assignedRiderSnapshot,
           status: newStatus,
           ready_at: newStatus === "ready_for_pickup" ? nowTimestamp : (subOrder.ready_at || nowTimestamp),
+          updated_at: nowTimestamp,
+        },
+      }
+    );
+
+    // Sync all delivery tasks under this order
+    await getDb().collection("delivery_tasks").updateMany(
+      { order_id: subOrder.order_id },
+      {
+        $set: {
+          delivery_agent_id: assignedAgentObjId,
+          status: "assigned",
           updated_at: nowTimestamp,
         },
       }

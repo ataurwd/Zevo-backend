@@ -39,8 +39,8 @@ export const updateProductSchema = z.object({
   body: z.object({
     category_id: z.string().optional(),
     name: z.string().min(2).optional(),
-    description: z.string().min(10).optional(),
-    images: z.array(z.string().url()).max(5, "A product can have a maximum of 5 images").optional(),
+    description: z.string().min(5).optional(),
+    images: z.array(z.string()).max(5, "A product can have a maximum of 5 images").optional(),
     tags: z.array(z.string()).optional(),
     attributes: z
       .array(
@@ -50,6 +50,14 @@ export const updateProductSchema = z.object({
         })
       )
       .optional(),
+    variants: z.array(variantSchema).optional(),
+    shipping: z.any().optional().nullable(),
+    selling_type: z.enum(["in_store", "online", "both"]).optional().nullable(),
+    inventory_quantity: z.number().int().nonnegative().optional().nullable(),
+    sku: z.string().optional(),
+    base_price: z.number().optional().nullable(),
+    compare_at_price: z.number().optional().nullable(),
+    status: z.enum(["draft", "pending_review", "approved", "rejected", "suspended"]).optional(),
   }),
 });
 

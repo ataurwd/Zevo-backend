@@ -95,6 +95,12 @@ export class ProductsController {
     sendSuccess(res, rejected, 200, "Product rejected");
   };
 
+  public static adminGetDetail = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) throw new UnauthorizedError("Authentication required");
+    const product = await ProductsService.adminGetProductById(req.params.id);
+    sendSuccess(res, product);
+  };
+
   public static adminCreate = async (req: Request, res: Response): Promise<void> => {
     if (!req.user) throw new UnauthorizedError("Authentication required");
     const created = await ProductsService.adminCreate(req.user.id, req.body);

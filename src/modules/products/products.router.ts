@@ -78,6 +78,13 @@ router.get(
   asyncHandler(ProductsController.adminList)
 );
 
+router.get(
+  "/admin/:id",
+  authenticate,
+  authorize("ADMIN", "SUPER_ADMIN"),
+  asyncHandler(ProductsController.adminGetDetail)
+);
+
 router.patch(
   "/admin/:id/approve",
   authenticate,

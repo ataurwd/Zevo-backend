@@ -126,8 +126,17 @@ export interface UpdateProductDTO {
   category_id?: string;
   name?: string;
   description?: string;
+  images?: string[];
   tags?: string[];
   attributes?: Array<{ name: string; value: string }>;
+  variants?: CreateVariantDTO[];
+  shipping?: any;
+  selling_type?: "in_store" | "online" | "both" | null;
+  inventory_quantity?: number | null;
+  sku?: string;
+  base_price?: number | null;
+  compare_at_price?: number | null;
+  status?: ProductStatus;
 }
 
 export interface ProductFilterQuery {

@@ -192,15 +192,68 @@ export class ProductsService {
     }
 
     const updateData: Partial<ProductDocument> = {
-      ...(dto.name !== undefined ? { name: dto.name } : {}),
+      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
       ...(dto.attributes !== undefined ? { attributes: dto.attributes } : {}),
       ...(category_id !== undefined ? { category_id } : {}),
+      ...(dto.images !== undefined ? { images: dto.images.slice(0, 5) } : {}),
+      ...(dto.shipping !== undefined ? { shipping: dto.shipping } : {}),
+      ...(dto.selling_type !== undefined ? { selling_type: dto.selling_type } : {}),
+      ...(dto.inventory_quantity !== undefined ? { inventory_quantity: dto.inventory_quantity } : {}),
+      ...(dto.compare_at_price !== undefined ? { compare_at_price: dto.compare_at_price } : {}),
+      ...(dto.status !== undefined ? { status: dto.status } : {}),
     };
+
+    let updatedVariants: ProductVariant[] | undefined;
+    if (dto.variants && Array.isArray(dto.variants) && dto.variants.length > 0) {
+      updatedVariants = dto.variants.map((v, index) => {
+        const existingVariant = product.variants[index] || product.variants.find((pv) => pv.sku === v.sku);
+        const sku = v.sku?.trim() || existingVariant?.sku || `SKU-${Date.now()}-${index}`.toUpperCase();
+        const variantQty = v.quantity !== undefined && v.quantity !== null
+          ? Number(v.quantity)
+          : (dto.inventory_quantity !== undefined && dto.inventory_quantity !== null ? Number(dto.inventory_quantity) : 50);
+
+        return {
+          _id: existingVariant?._id || new ObjectId(),
+          sku,
+          name: v.name,
+          attributes: v.attributes || {},
+          price: v.price,
+          compare_at_price: v.compare_at_price !== undefined ? v.compare_at_price : null,
+          weight_grams: v.weight_grams !== undefined ? v.weight_grams : null,
+          quantity: variantQty,
+          is_active: v.is_active !== undefined ? v.is_active : true,
+        };
+      });
+
+      updateData.variants = updatedVariants;
+      const activePrices = updatedVariants.filter((v) => v.is_active).map((v) => v.price);
+      updateData.base_price = activePrices.length > 0 ? Math.min(...activePrices) : updatedVariants[0].price;
+      const totalInventoryQty = updatedVariants.reduce((sum, v) => sum + (v.quantity || 0), 0);
+      updateData.inventory_quantity = totalInventoryQty;
+    } else if (dto.base_price !== undefined && dto.base_price !== null) {
+      updateData.base_price = dto.base_price;
+      if (product.variants && product.variants.length > 0) {
+        updateData.variants = product.variants.map((v, idx) => idx === 0 ? { ...v, price: dto.base_price! } : v);
+      }
+    }
 
     const updated = await ProductsRepository.update(productId, updateData);
     if (!updated) throw new BadRequestError("Failed updating product");
+
+    if (updatedVariants) {
+      for (const variant of updatedVariants) {
+        await InventoryService.provisionInventoryForVariant(
+          product._id,
+          variant._id,
+          variant.sku,
+          product.store_id,
+          product.seller_id,
+          variant.quantity ?? 50
+        );
+      }
+    }
 
     await this.invalidateCache(productId);
     return ProductsRepository.toResponse(updated);
@@ -473,12 +526,19 @@ export class ProductsService {
     if (!product) throw new NotFoundError("Product not found");
 
     const updateData: Partial<ProductDocument> = {};
-    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.name !== undefined) updateData.name = dto.name.trim();
     if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.status !== undefined) updateData.status = dto.status;
     if (dto.base_price !== undefined) {
       updateData.base_price = dto.base_price > 1000 ? dto.base_price : Math.round(Number(dto.base_price) * 100);
     }
+    if (dto.compare_at_price !== undefined) {
+      updateData.compare_at_price = dto.compare_at_price ? (dto.compare_at_price > 1000 ? dto.compare_at_price : Math.round(Number(dto.compare_at_price) * 100)) : null;
+    }
+    if (dto.shipping !== undefined) updateData.shipping = dto.shipping;
+    if (dto.selling_type !== undefined) updateData.selling_type = dto.selling_type;
+    if (dto.inventory_quantity !== undefined) updateData.inventory_quantity = Number(dto.inventory_quantity);
+    if (dto.attributes !== undefined) updateData.attributes = dto.attributes;
     if (dto.images !== undefined) updateData.images = (Array.isArray(dto.images) ? dto.images : [dto.images]).slice(0, 5);
     if (dto.tags !== undefined) {
       updateData.tags = Array.isArray(dto.tags) ? dto.tags : typeof dto.tags === "string" ? dto.tags.split(",").map((t: string) => t.trim()) : [];
@@ -501,14 +561,30 @@ export class ProductsService {
         price: v.price > 1000 ? v.price : Math.round(Number(v.price) * 100),
         compare_at_price: v.compare_at_price ? Math.round(Number(v.compare_at_price) * 100) : null,
         weight_grams: v.weight_grams ? Number(v.weight_grams) : null,
+        quantity: v.quantity !== undefined && v.quantity !== null ? Number(v.quantity) : (dto.inventory_quantity ? Number(dto.inventory_quantity) : 50),
         is_active: v.is_active !== undefined ? v.is_active : true,
       }));
       updateData.variants = mappedVariants;
       updateData.base_price = Math.min(...mappedVariants.map((v: any) => v.price));
+      const totalInventoryQty = mappedVariants.reduce((sum: number, v: any) => sum + (v.quantity || 0), 0);
+      updateData.inventory_quantity = totalInventoryQty;
     }
 
     const updated = await ProductsRepository.update(productId, updateData);
     if (!updated) throw new BadRequestError("Failed updating product");
+
+    if (updateData.variants) {
+      for (const variant of updateData.variants) {
+        await InventoryService.provisionInventoryForVariant(
+          product._id,
+          variant._id,
+          variant.sku,
+          product.store_id,
+          product.seller_id,
+          variant.quantity ?? 50
+        );
+      }
+    }
 
     await AuditService.log({
       userId: adminUserId,
@@ -520,6 +596,12 @@ export class ProductsService {
 
     await this.invalidateCache(productId);
     return ProductsRepository.toResponse(updated);
+  }
+
+  public static async adminGetProductById(productId: string): Promise<ProductResponse> {
+    const product = await ProductsRepository.findById(productId);
+    if (!product) throw new NotFoundError("Product not found");
+    return ProductsRepository.toResponse(product);
   }
 
   public static async adminDelete(
