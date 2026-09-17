@@ -25,10 +25,10 @@ export async function bootstrapDatabase(db: Db, force = false): Promise<void> {
     logger.info("Verifying and upserting Zevo default users into MongoDB...");
     const defaultUsers = [
       {
-        _id: new ObjectId("65f1a2b3c4d5e6f7a8b9c010"),
+        _id: new ObjectId("65f1a2b3c4d5e6f7a8b9c099"),
         email: "support@nexora.com",
         first_name: "Nexora",
-        last_name: "Support Desk",
+        last_name: "Support Agent",
         role: "SUPPORT",
         password_hash: DEFAULT_PASSWORD_HASH,
         phone: "+15550000009",
