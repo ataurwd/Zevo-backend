@@ -10,6 +10,7 @@ vi.mock("../infrastructure/db/client", () => {
   return {
     getDb: vi.fn(),
     checkDBHealth: vi.fn().mockResolvedValue(true),
+    ensureConnected: vi.fn().mockResolvedValue({}),
   };
 });
 

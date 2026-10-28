@@ -21,10 +21,10 @@ export class HealthController {
 
     const services = {
       mongodb: mongodbUp ? "up" : "down",
-      redis: redisUp ? "up" : "down",
+      redis: process.env.REDIS_URL ? (redisUp ? "up" : "down") : "optional",
     };
 
-    const isReady = mongodbUp && redisUp;
+    const isReady = mongodbUp && (process.env.REDIS_URL ? redisUp : true);
 
     if (!isReady) {
       res.status(503).json({

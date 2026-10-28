@@ -22,9 +22,14 @@ export function createApp(): Express {
   app.use(helmet());
 
   // CORS configuration
+  const frontendUrl = process.env.FRONTEND_URL?.trim().replace(/\/$/, "");
   const rawAllowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
     .split(",")
     .map((origin) => origin.trim().replace(/\/$/, ""));
+
+  if (frontendUrl && !rawAllowedOrigins.includes(frontendUrl)) {
+    rawAllowedOrigins.push(frontendUrl);
+  }
 
   const isOriginAllowed = (origin?: string): boolean => {
     if (!origin) return true; // mobile apps, server-to-server, curl
@@ -91,11 +96,12 @@ export function createApp(): Express {
   );
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-  // Root & Direct Health ping for Uptime monitors & Render keep-alive
-  app.get(["/", "/health"], (_req, res) => {
+  // Root & Direct Health ping for Uptime monitors, Vercel & Render keep-alive
+  app.get(["/", "/health", "/api", "/api/health"], (_req, res) => {
     res.status(200).json({
       status: "alive",
-      service: "zevo-backend",
+      service: "nexora-backend",
+      environment: process.env.NODE_ENV || "development",
       uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
@@ -104,7 +110,7 @@ export function createApp(): Express {
   // Request Tracking & Logging
   app.use(requestLogger);
 
-  // Static uploads directory
+  // Static uploads directory (safe fallback)
   app.use("/uploads", express.static("uploads"));
 
   // Prometheus direct scraping endpoint
@@ -116,7 +122,9 @@ export function createApp(): Express {
   // Auto-connect to DB if not yet connected
   app.use("/api/v1", async (_req, _res, next) => {
     try {
-      await ensureConnected();
+      if (typeof ensureConnected === "function") {
+        await ensureConnected();
+      }
     } catch {
       // route handlers will catch and report meaningful error via getDb()
     }
