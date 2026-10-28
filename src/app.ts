@@ -15,6 +15,15 @@ dotenv.config();
 export function createApp(): Express {
   const app = express();
 
+  // Vercel Serverless URL Normalization (ensures rewritten paths route to expected endpoints)
+  app.use((req, _res, next) => {
+    const matchedPath = req.headers["x-matched-path"] as string;
+    if (matchedPath && (req.url === "/api" || req.url === "/api/")) {
+      req.url = matchedPath;
+    }
+    next();
+  });
+
   // Metrics middleware for HTTP latency and status tracking
   app.use(metricsMiddleware);
 
