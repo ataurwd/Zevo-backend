@@ -28,10 +28,10 @@ async function bootstrap(): Promise<void> {
     const server = http.createServer(app);
     initSocketServer(server);
 
-    // Render Keep-Alive Auto-Ping (Prevents free-tier inactivity sleep)
-    const externalUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL;
-    if (externalUrl) {
-      const PING_INTERVAL = 14 * 60 * 1000; // 14 minutes (Render sleeps after 15 min)
+    // Optional Keep-Alive Auto-Ping (only if explicitly enabled via env flag)
+    const externalUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL;
+    if (process.env.ENABLE_KEEP_ALIVE === "true" && externalUrl) {
+      const PING_INTERVAL = 14 * 60 * 1000;
       const pingUrl = externalUrl.startsWith("http") ? `${externalUrl}/health` : `https://${externalUrl}/health`;
       setInterval(() => {
         const client = pingUrl.startsWith("https") ? https : http;
@@ -41,7 +41,7 @@ async function bootstrap(): Promise<void> {
           logger.warn(`Keep-alive ping failed: ${err.message}`);
         });
       }, PING_INTERVAL);
-      logger.info(`Keep-alive auto-ping enabled for ${pingUrl} every 14 minutes`);
+      logger.info(`Keep-alive auto-ping enabled for ${pingUrl}`);
     }
 
     server.listen(PORT, () => {

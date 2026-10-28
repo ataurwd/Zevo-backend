@@ -1,6 +1,6 @@
 import pino from "pino";
 
-const isProduction = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
+const isProduction = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL) || process.env.RENDER === "true";
 
 let transport: any = undefined;
 
